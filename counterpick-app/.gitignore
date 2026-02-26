@@ -1,0 +1,50 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build output
+dist/
+build/
+.turbo/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+.venv/
+*.egg-info/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# Cache
+.cache/
+*.cache
+
+# Backend Runtime Cache (wird automatisch neu generiert)
+apps/backend/cache_data.json
+
+# Tauri (für später)
+src-tauri/target/
+
+# Test
+coverage/
+.nyc_output/
+

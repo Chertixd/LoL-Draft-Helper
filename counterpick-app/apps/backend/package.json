@@ -1,0 +1,16 @@
+{
+    "name": "@counterpick/backend",
+    "version": "1.0.0",
+    "description": "Python Flask Backend für Counterpick App mit Recommendation Engine",
+    "private": true,
+    "scripts": {
+        "start": "python backend.py",
+        "dev": "python backend.py",
+        "install-deps": "pip install -r requirements.txt && pip install -e .",
+        "setup": "pip install -r requirements.txt && pip install -e . && echo Setup abgeschlossen!"
+    },
+    "engines": {
+        "python": ">=3.10"
+    }
+}
+

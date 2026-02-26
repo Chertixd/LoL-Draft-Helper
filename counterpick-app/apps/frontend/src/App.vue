@@ -1,0 +1,279 @@
+<script setup lang="ts">
+import { ref, onMounted, computed } from 'vue';
+import { RouterView, RouterLink } from 'vue-router';
+import { checkBackendHealth } from '@/api/backend';
+import { useDraftStore } from '@/stores/draft';
+import { useSettingsStore } from '@/stores/settings';
+import PatchSelector from '@/components/common/PatchSelector.vue';
+
+const draftStore = useDraftStore();
+const settingsStore = useSettingsStore();
+
+const backendStatus = ref<'checking' | 'online' | 'offline'>('checking');
+
+// League Client Status aus dem draftStore
+const leagueClientStatus = computed(() => {
+    if (!draftStore.websocketConnected) return 'offline';
+    if (draftStore.leagueClientConnected) return 'online';
+    return 'waiting';
+});
+
+onMounted(async () => {
+    try {
+        const response = await checkBackendHealth();
+        backendStatus.value = response.status === 'ok' ? 'online' : 'offline';
+    } catch {
+        backendStatus.value = 'offline';
+    }
+    
+    // Lade verfügbare Patches aus Supabase
+    settingsStore.loadPatches();
+});
+</script>
+
+<template>
+    <div class="app-container">
+        <header class="app-header">
+            <div class="header-content">
+                <div class="header-row">
+                    <div class="header-left">
+                        <h1 class="app-title">
+                            <span class="title-gradient">Counterpick</span>
+                            <span class="title-subtitle">Draft Analyzer</span>
+                        </h1>
+                        
+                        <div class="nav-divider"></div>
+
+                        <nav class="app-nav">
+                            <RouterLink to="/draft" class="nav-link">Draft Tracker</RouterLink>
+                            <RouterLink to="/lookup" class="nav-link">Champion Lookup</RouterLink>
+                        </nav>
+                    </div>
+
+                    <div class="header-right">
+                        <PatchSelector :horizontal="true" />
+                    </div>
+                </div>
+            </div>
+        </header>
+        
+        <main class="app-content">
+            <div v-if="backendStatus === 'offline'" class="backend-warning">
+                <span class="warning-icon">⚠️</span>
+                <div class="warning-text">
+                    <strong>Backend ist offline!</strong>
+                    <p>Bitte starte das Backend mit <code>python backend.py</code></p>
+                </div>
+            </div>
+            
+            <RouterView />
+        </main>
+        
+        <footer class="app-footer">
+            <span :class="['status-badge', backendStatus]">
+                <span class="status-dot"></span>
+                Backend: {{ 
+                    backendStatus === 'checking' ? 'Prüfe...' : 
+                    backendStatus === 'online' ? 'Online' : 'Offline' 
+                }}
+            </span>
+            <span :class="['status-badge', leagueClientStatus]">
+                <span class="status-dot"></span>
+                League Client: {{ 
+                    leagueClientStatus === 'online' ? 'Online' : 
+                    leagueClientStatus === 'waiting' ? 'Warte...' : 'Offline' 
+                }}
+            </span>
+        </footer>
+    </div>
+</template>
+
+<style scoped>
+.app-container {
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+}
+
+/* --- HEADER STYLES --- */
+.app-header {
+    /* Viel weniger Padding für kompakten Look */
+    padding: 0.75rem 2rem; 
+    background: var(--bg-secondary);
+    border-bottom: 1px solid var(--border-color);
+    height: 64px; /* Fixierte Höhe verhindert Springen */
+    display: flex;
+    align-items: center;
+}
+
+.header-content {
+    width: 100%;
+    max-width: 1400px; /* Breiter für mehr Platz */
+    margin: 0 auto;
+}
+
+.header-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 1rem;
+}
+
+.header-left {
+    display: flex;
+    align-items: center;
+    gap: 1.5rem; /* Abstand zwischen Logo und Nav */
+}
+
+/* Logo Bereich */
+.app-title {
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+    margin: 0;
+    line-height: 1;
+}
+
+.title-gradient {
+    font-size: 1.25rem; /* Deutlich kleiner */
+    font-weight: 800;
+    letter-spacing: -0.5px;
+    background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
+
+.title-subtitle {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+/* Trennlinie */
+.nav-divider {
+    width: 1px;
+    height: 24px;
+    background: var(--border-color);
+}
+
+/* Navigation */
+.app-nav {
+    display: flex;
+    gap: 0.5rem;
+}
+
+.nav-link {
+    padding: 0.4rem 0.8rem;
+    border-radius: var(--radius-md);
+    font-size: 0.9rem;
+    font-weight: 500;
+    color: var(--text-secondary);
+    text-decoration: none;
+    transition: all var(--transition-fast);
+}
+
+.nav-link:hover {
+    color: var(--text-primary);
+    background: var(--bg-tertiary);
+}
+
+.nav-link.router-link-active {
+    color: var(--primary);
+    background: rgba(102, 126, 234, 0.1);
+    font-weight: 600;
+}
+
+/* Mobile Responsive */
+@media (max-width: 768px) {
+    .app-header {
+        height: auto;
+        padding: 1rem;
+    }
+
+    .header-row {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 1rem;
+    }
+
+    .header-left {
+        flex-direction: column;
+        align-items: center;
+        gap: 0.75rem;
+    }
+    
+    .nav-divider {
+        display: none;
+    }
+
+    .header-right {
+        display: flex;
+        justify-content: center;
+    }
+}
+
+/* --- MAIN & FOOTER --- */
+.app-content {
+    flex: 1;
+    padding: 1.5rem 2rem;
+    max-width: 1400px; /* Passend zum Header */
+    width: 100%;
+    margin: 0 auto;
+}
+
+.backend-warning {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.75rem;
+    padding: 1rem 1.25rem;
+    background: rgba(239, 68, 68, 0.1);
+    border: 1px solid var(--error);
+    border-radius: var(--radius-md);
+    margin-bottom: 1.5rem;
+}
+
+.warning-icon { font-size: 1.5rem; }
+.warning-text strong { color: var(--error); }
+.warning-text p { margin: 0.25rem 0 0 0; font-size: 0.875rem; color: var(--text-secondary); }
+.warning-text code { background: var(--bg-tertiary); padding: 0.125rem 0.375rem; border-radius: var(--radius-sm); font-size: 0.8rem; }
+
+.app-footer {
+    padding: 0.5rem 2rem;
+    border-top: 1px solid var(--border-color);
+    display: flex;
+    justify-content: center;
+    gap: 1.5rem;
+    background: var(--bg-secondary); /* Footer auch dunkel abgesetzt */
+}
+
+.status-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.75rem; /* Kleinerer Footer Text */
+    color: var(--text-secondary);
+}
+
+.status-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--text-muted);
+}
+
+.status-badge.online .status-dot { background: var(--success); }
+.status-badge.offline .status-dot { background: var(--error); }
+.status-badge.checking .status-dot,
+.status-badge.waiting .status-dot {
+    background: var(--warning);
+    animation: pulse 1s infinite;
+}
+
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+}
+</style>

@@ -1,0 +1,97 @@
+{
+  "support_champions": [
+    "alistar", "bard", "blitzcrank", "brand", "braum", "janna", "karma",
+    "leona", "lulu", "lux", "milio", "morgana", "nami", "nautilus",
+    "pyke", "rakan", "rell", "renata", "renataglasc", "senna", "seraphine",
+    "sona", "soraka", "taric", "thresh", "xerath", "yuumi", "zyra", "zilean",
+    "velkoz", "pantheon", "neeko", "shaco", "poppy", "shen",
+    "galio", "tahmkench", "ivern", "fiddlesticks", "annie", "vel'koz"
+  ],
+  "adc_champions": [
+    "jinx", "caitlyn", "ashe", "vayne", "kaisa", "ezreal", "jhin",
+    "missfortune", "lucian", "draven", "sivir", "tristana",
+    "kogmaw", "twitch", "varus", "aphelios", "samira", "kalista",
+    "xayah", "zeri", "nilah", "smolder", "corki", "ziggs", "swain",
+    "kog'maw", "miss fortune", "kai'sa"
+  ],
+  "jungle_champions": [
+    "amumu", "belveth", "briar", "diana", "evelynn", "fiddlesticks", "graves",
+    "hecarim", "ivern", "jarvan", "jarvaniv", "karthus", "kayn", "khazix",
+    "kindred", "lee", "leesin", "lillia", "maokai", "masteryi", "naafiri",
+    "nidalee", "nocturne", "nunu", "nunuwillump", "olaf", "rammus", "reksai",
+    "rengar", "sejuani", "shaco", "shyvana", "skarner", "taliyah", "udyr",
+    "vi", "viego", "volibear", "warwick", "wukong", "zac", "zed"
+  ],
+  "mid_champions": [
+    "ahri", "akali", "akshan", "anivia", "annie", "aurelionsol", "azir",
+    "cassiopeia", "corki", "ekko", "fizz", "galio", "hwei", "irelia",
+    "kassadin", "katarina", "leblanc", "lissandra", "lux", "malzahar",
+    "neeko", "orianna", "qiyana", "ryze", "swain", "sylas", "syndra",
+    "talon", "twistedfate", "veigar", "vex", "viktor", "vladimir", "xerath",
+    "yasuo", "yone", "zed", "ziggs", "zoe"
+  ],
+  "top_champions": [
+    "aatrox", "akali", "akshan", "camille", "chogath", "darius", "drmundo",
+    "fiora", "gangplank", "garen", "gnar", "gragas", "gwen", "illaoi",
+    "irelia", "jax", "jayce", "kennen", "kled", "ksante", "malphite",
+    "mordekaiser", "nasus", "olaf", "ornn", "pantheon", "poppy", "quinn",
+    "renekton", "riven", "rumble", "sett", "shen", "singed", "sion",
+    "teemo", "trundle", "tryndamere", "urgot", "volibear", "wukong", "yorick"
+  ],
+  "primary_roles": {
+    "ziggs": "adc",
+    "corki": "mid",
+    "akali": "mid",
+    "akshan": "mid",
+    "irelia": "top",
+    "yasuo": "mid",
+    "yone": "mid",
+    "zed": "mid",
+    "quinn": "top",
+    "vayne": "adc",
+    "lucian": "adc",
+    "tristana": "adc",
+    "kogmaw": "adc",
+    "kog'maw": "adc",
+    "varus": "adc",
+    "ashe": "adc",
+    "jinx": "adc",
+    "caitlyn": "adc",
+    "ezreal": "adc",
+    "jhin": "adc",
+    "kaisa": "adc",
+    "kai'sa": "adc",
+    "missfortune": "adc",
+    "miss fortune": "adc",
+    "xayah": "adc",
+    "zeri": "adc",
+    "samira": "adc",
+    "aphelios": "adc",
+    "kalista": "adc",
+    "sivir": "adc",
+    "draven": "adc",
+    "nilah": "adc",
+    "smolder": "adc",
+    "swain": "adc",
+    "twitch": "adc",
+    "zaahen": "top",
+    "zaheen": "top"
+  },
+  "role_synergy_mapping": {
+    "support": "adc",
+    "adc": "support",
+    "jungle": "mid",
+    "mid": "jungle",
+    "top": "jungle"
+  },
+  "opgg_role_names": {
+    "support": "Support",
+    "adc": "Bottom",
+    "bottom": "Bottom",
+    "jungle": "Jungle",
+    "mid": "Middle",
+    "middle": "Middle",
+    "top": "Top"
+  }
+}
+
