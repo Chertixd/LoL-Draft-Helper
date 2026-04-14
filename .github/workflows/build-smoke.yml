@@ -1,0 +1,122 @@
+# .github/workflows/build-smoke.yml
+# BUILD-05 partial — build smoke check on every push to main and on PRs.
+# The full release workflow (BUILD-01..04, BUILD-06) is Phase 4.
+name: Build Smoke
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-and-smoke:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12.x"
+          cache: pip
+          cache-dependency-path: counterpick-app/apps/backend/requirements.txt
+
+      - name: Install runtime + build deps
+        working-directory: counterpick-app/apps/backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller==6.19.0
+          pip install "python-socketio[client]>=5.9.0,<6"
+
+      # B-2 fix: install the editable lolalytics_api package BEFORE any
+      # pytest or build step runs. Without this, every `python backend.py`
+      # spawn in the integration test fails with ModuleNotFoundError
+      # because backend.py imports `from lolalytics_api import ...` at
+      # the top level, which is resolved via site-packages (pyproject.toml
+      # `[tool.setuptools.package-dir] "" = "src"`).
+      - name: Install lolalytics_api (editable)
+        working-directory: counterpick-app/apps/backend
+        run: pip install -e .
+
+      # CONTEXT D-07: hard CI guard against UPX being re-enabled.
+      # Runs BEFORE the (slower) PyInstaller build so spec regressions
+      # get rejected in under 30 seconds.
+      - name: Enforce upx=False in spec
+        working-directory: counterpick-app/apps/backend
+        shell: bash
+        run: |
+          if grep -E '^\s*upx\s*=\s*True' backend.spec; then
+            echo "::error file=backend.spec::upx=True is not allowed (Pitfall #2)"
+            exit 1
+          fi
+
+      - name: Unit + dev-mode integration tests
+        working-directory: counterpick-app/apps/backend
+        run: |
+          pytest test_backend_cli.py -v
+          pytest scripts/test_virustotal_check.py -v
+
+      - name: PyInstaller build
+        working-directory: counterpick-app/apps/backend
+        run: pyinstaller --clean --noconfirm backend.spec
+
+      # W-2: precheck that `strings` is actually available on the runner.
+      # Without the precheck a runner-image change dropping `strings`
+      # would silently make this guard a no-op.
+      - name: Verify supabase NOT in bundle
+        working-directory: counterpick-app/apps/backend
+        shell: bash
+        run: |
+          command -v strings >/dev/null 2>&1 || { echo "::error::strings binary not available on runner" >&2; exit 1; }
+          if strings dist/backend-x86_64-pc-windows-msvc.exe | grep -i supabase; then
+            echo "::error::supabase strings leaked into the bundle"
+            exit 1
+          fi
+
+      # SIDE-04: Smoke-test the BUILT .exe — Socket.IO round-trip + HTTPS GET.
+      - name: Smoke test built .exe
+        working-directory: counterpick-app/apps/backend
+        shell: pwsh
+        run: |
+          $port = 5755
+          $ready = Join-Path $env:RUNNER_TEMP "ready.json"
+          if (Test-Path $ready) { Remove-Item $ready }
+          $exe = "dist/backend-x86_64-pc-windows-msvc.exe"
+          $proc = Start-Process -FilePath $exe `
+            -ArgumentList @("--port", $port, "--ready-file", $ready) `
+            -PassThru -NoNewWindow
+          $deadline = (Get-Date).AddSeconds(10)
+          while ((Get-Date) -lt $deadline -and -not (Test-Path $ready)) {
+            Start-Sleep -Milliseconds 100
+          }
+          if (-not (Test-Path $ready)) {
+            Stop-Process -Id $proc.Id -Force
+            throw "ready-file never appeared"
+          }
+          python smoke_test_exe.py --port $port
+          $exit = $LASTEXITCODE
+          Stop-Process -Id $proc.Id -Force
+          exit $exit
+
+      # CONTEXT D-22: VirusTotal advisory-only in Phase 1.
+      # B-3 fix: references the real scripts/virustotal_check.py (shipped
+      # by this plan) and is marked continue-on-error so transient VT
+      # failures don't break Phase 1 builds. Phase 4 removes the
+      # continue-on-error flag to make this a hard gate.
+      - name: VirusTotal scan (advisory)
+        if: ${{ env.VT_API_KEY != '' }}
+        continue-on-error: true
+        env:
+          VT_API_KEY: ${{ secrets.VT_API_KEY }}
+        working-directory: counterpick-app/apps/backend
+        run: python scripts/virustotal_check.py dist/backend-x86_64-pc-windows-msvc.exe --max-detections 3
+
+      - name: Upload built .exe artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-exe
+          path: counterpick-app/apps/backend/dist/backend-x86_64-pc-windows-msvc.exe
+          retention-days: 7
