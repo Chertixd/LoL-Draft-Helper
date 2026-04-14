@@ -21,15 +21,29 @@ from lolalytics_api.supabase_client import get_supabase_client
 from lolalytics_api.config import get_supabase_url
 from league_client_api import is_league_client_running, get_draft_picks_bans, get_draft_session, get_gameflow_session
 from league_client_websocket import connect_to_league_client_websocket, disconnect_from_league_client_websocket, is_websocket_connected
+import argparse
 import json
+import logging
+import logging.handlers
+import sys
 import time
 import os
 import threading
 from pathlib import Path
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from functools import wraps
 import requests
 from dotenv import load_dotenv
+
+# Phase 1 SIDE-05 / D-14: path-resolution helpers. All runtime paths in this
+# file route through these so the frozen-mode _MEIPASS contract and the
+# platformdirs user-writable contract are both honored.
+from lolalytics_api.resources import (
+    LOL_DRAFT_APP_NAME,
+    bundled_resource,
+    user_cache_dir,
+    user_log_dir,
+)
 
 # Import für Error Handling
 try:
@@ -44,16 +58,31 @@ try:
 except ImportError:
     HTTPX_AVAILABLE = False
 
-# Lade .env-Datei explizit aus dem Verzeichnis, wo backend.py liegt
-env_path = Path(__file__).parent / '.env'
-load_dotenv(dotenv_path=env_path)
+# Lade .env-Datei.
+# Phase 1 D-14 / SIDE-05: path resolution routes through `bundled_resource`
+# so neither the dunder-file anchor nor the current-working-directory helper
+# appears on the runtime path. In dev mode this resolves to `apps/backend/.env`
+# (via the resources
+# helper's anchor walk); when frozen it resolves under `sys._MEIPASS`. The
+# bundle spec does NOT include `.env`, so in frozen mode the file simply
+# does not exist and `load_dotenv` becomes a no-op — correct behavior for
+# the installed sidecar.
+env_path = bundled_resource('.env')
+if env_path.exists():
+    load_dotenv(dotenv_path=env_path)
 
 app = Flask(__name__)
 CORS(app)  # Erlaube Cross-Origin Requests vom HTML-Frontend
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
 
-# Persistenter JSON-Cache
-CACHE_FILE = Path(__file__).parent / 'cache_data.json'
+# Persistenter JSON-Cache.
+# Phase 1 D-14 / SIDE-05: the cache file lives under the platformdirs
+# user_cache_dir() — on Windows %LOCALAPPDATA%\lol-draft-analyzer\Cache —
+# so the frozen bundle's ephemeral _MEIPASS temp-extract never hosts
+# runtime-mutable state. Phase 2 replaces this persistence path entirely
+# with json_repo.py; for Phase 1 only the path-resolution mechanism
+# changes (behavior is unchanged — read/write of cache_data.json).
+CACHE_FILE = user_cache_dir() / 'cache_data.json'
 CACHE_DURATION = 86400  # 24 Stunden in Sekunden
 
 # Manuelle Rollen-Überschreibung (None = automatische Erkennung aktiv)
@@ -164,9 +193,26 @@ def cached(cache_key_func):
 
 @app.route('/api/health', methods=['GET'])
 def health_check():
-    """Health-Check Endpunkt"""
+    """
+    Sidecar liveness probe.
+
+    Consumed by:
+      - the in-process probe thread (see `_probe_health_then_signal_ready`)
+        which uses the first 200 here as the signal that it is safe to write
+        the ready-file (Phase 1 SIDE-02 contract);
+      - the Tauri host (Phase 3) as a secondary verification after the
+        ready-file appears;
+      - Plan 03's `test_backend_cli.py`, which asserts the `version` field
+        is present.
+
+    :return: JSON body ``{"status": "ok", "version": "<str>", ...}``. The
+        `status` and `version` keys are load-bearing (Plan 03 test); extra
+        diagnostic keys (service, cache_entries, timestamp) are retained
+        for backward compatibility with the existing dev-mode usage.
+    """
     return jsonify({
         'status': 'ok',
+        'version': '1.0.0-dev',
         'service': 'lolalytics-backend',
         'cache_entries': len(cache),
         'timestamp': datetime.now().isoformat()
@@ -179,7 +225,13 @@ def get_primary_roles():
     Gibt die primary_roles Konfiguration zurück
     """
     try:
-        config_path = os.path.join(os.path.dirname(__file__), 'src', 'lolalytics_api', 'champion_roles.json')
+        # Phase 1 D-14: resolve via bundled_resource (dev: anchored at
+        # apps/backend/; frozen: under sys._MEIPASS). The champion_roles.json
+        # file is shipped inside the lolalytics_api package source tree, and
+        # the PyInstaller spec collects the package submodules so the file
+        # lands at `_MEIPASS/src/lolalytics_api/champion_roles.json` in the
+        # frozen bundle (matching the dev-mode layout).
+        config_path = bundled_resource('src/lolalytics_api/champion_roles.json')
         with open(config_path, 'r', encoding='utf-8') as f:
             config = json.load(f)
             primary_roles = config.get('primary_roles', {})
@@ -1729,7 +1781,198 @@ def start_league_client_websocket():
         threading.Thread(target=send_error, daemon=True).start()
 
 
-if __name__ == '__main__':
+def _configure_logging(log_dir: Path) -> None:
+    """
+    Configure the root logger with a daily-rotating file handler.
+
+    Phase 1 ships only the bare rotating handler; full LCU-auth-redaction
+    and structured logging land in Phase 3 (LOG-01..05). The `print()`
+    calls elsewhere in this file intentionally remain — CONVENTIONS
+    preserves the print-with-bracket-prefix style for existing code;
+    new code in `main()` uses `logging.getLogger(__name__)`.
+
+    :param log_dir: Directory to write ``backend.log`` into. Created
+        if missing.
+    """
+    log_dir.mkdir(parents=True, exist_ok=True)
+    handler = logging.handlers.TimedRotatingFileHandler(
+        log_dir / "backend.log",
+        when="midnight",
+        backupCount=14,
+        encoding="utf-8",
+    )
+    handler.setFormatter(
+        logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+    )
+    root = logging.getLogger()
+    root.setLevel(logging.INFO)
+    root.addHandler(handler)
+
+
+def _atomic_write_ready_file(path: Path, payload: dict) -> None:
+    """
+    Write ``payload`` to ``path`` atomically via a sibling tempfile and
+    ``os.replace``.
+
+    ``os.replace`` is atomic on both Windows (NTFS, Python 3.3+) and
+    POSIX, so a concurrent reader (Tauri host or the Plan 03 integration
+    test) will see either the previous state or the final fully-written
+    JSON — never a half-written file (Pitfall #2 / D-04).
+
+    :param path: Final destination of the ready-file.
+    :param payload: JSON-serializable dict (the per-D-04 shape is
+        ``{"port", "pid", "ready_at"}``).
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(payload), encoding="utf-8")
+    os.replace(tmp, path)  # atomic on Windows NTFS + POSIX
+
+
+def _probe_health_then_signal_ready(
+    port: int,
+    ready_file: Path | None,
+    interval_s: float = 0.05,
+    timeout_s: float = 5.0,
+) -> None:
+    """
+    Background probe: poll ``/api/health`` until 200 or timeout.
+
+    On the first 200 response, write the ready-file (if requested) and
+    return. On timeout, log the failure and call ``os._exit(1)`` —
+    ``sys.exit(1)`` would only raise ``SystemExit`` in this thread (the
+    thread machinery absorbs it) while the main thread keeps running
+    ``socketio.run``. ``os._exit`` terminates the whole process so the
+    non-zero exit status reaches Tauri / the CI harness.
+
+    The probe URL uses the literal ``127.0.0.1`` — never ``localhost``,
+    which on some Windows configurations resolves to IPv6 first and the
+    Flask-SocketIO threading server is bound to IPv4 only (Pitfall #8).
+
+    :param port: Port the Flask server is binding to.
+    :param ready_file: Path to write the ready JSON into; ``None`` to skip.
+    :param interval_s: Polling interval (default 50 ms per D-03).
+    :param timeout_s: Total budget for the probe (default 5 s per D-03).
+    """
+    log = logging.getLogger(__name__)
+    deadline = time.monotonic() + timeout_s
+    url = f"http://127.0.0.1:{port}/api/health"
+    while time.monotonic() < deadline:
+        try:
+            r = requests.get(url, timeout=0.5)
+            if r.status_code == 200:
+                if ready_file is not None:
+                    payload = {
+                        "port": port,
+                        "pid": os.getpid(),
+                        "ready_at": datetime.now(timezone.utc).isoformat(),
+                    }
+                    _atomic_write_ready_file(ready_file, payload)
+                log.info("[READY] port=%d pid=%d", port, os.getpid())
+                return
+        except requests.RequestException:
+            # Server not accepting yet; fall through to sleep and retry.
+            pass
+        time.sleep(interval_s)
+    log.error(
+        "[READY] /api/health did not return 200 within %.1fs", timeout_s
+    )
+    # Force-exit: cannot raise SystemExit from a sub-thread, and socketio.run
+    # is blocking the main thread for the server's lifetime.
+    os._exit(1)
+
+
+def main() -> None:
+    """
+    Sidecar entrypoint.
+
+    Lifecycle (Phase 1 SIDE-01 / SIDE-02 contract):
+
+    1. Parse ``--port``, ``--ready-file``, ``--cache-dir``, ``--log-dir``.
+    2. Configure rotating file logging under the resolved log dir.
+    3. Point ``SSL_CERT_FILE`` / ``REQUESTS_CA_BUNDLE`` at the bundled
+       ``certifi/cacert.pem`` when it exists (frozen mode only — dev
+       mode falls back to the pip-installed certifi automatically).
+    4. Delete any stale ready-file so the probe's first write is not
+       racing with a Tauri host already polling the old file (D-05).
+    5. Spawn the health-probe thread BEFORE ``socketio.run`` — the call
+       below blocks the main thread for the server's lifetime, so the
+       probe has to be on a daemon sub-thread or the ready-file is never
+       written (Pitfall #1; RESEARCH.md Pattern 4).
+    6. Bind loopback (127.0.0.1) only — never 0.0.0.0 (Sec-7). Werkzeug
+       debug mode is disabled because the auto-reloader's subprocess
+       breaks both PyInstaller --onefile and the ready-file protocol.
+       ``allow_unsafe_werkzeug=True`` is required by Flask-SocketIO 5+
+       in production and is the correct choice for a single-user
+       localhost desktop sidecar.
+    """
+    parser = argparse.ArgumentParser(
+        prog="backend",
+        description="LoL Draft Analyzer backend sidecar.",
+    )
+    parser.add_argument(
+        '--port', type=int, default=5000,
+        help='TCP port to bind 127.0.0.1 on (default: 5000 for native dev; 0 = OS-assigned).',
+    )
+    parser.add_argument(
+        '--ready-file', type=Path, default=None,
+        help='Path to write the JSON ready-marker after /api/health returns 200.',
+    )
+    parser.add_argument(
+        '--cache-dir', type=Path, default=None,
+        help='Override platformdirs.user_cache_dir().',
+    )
+    parser.add_argument(
+        '--log-dir', type=Path, default=None,
+        help='Override platformdirs.user_log_dir().',
+    )
+    args = parser.parse_args()
+
+    # Resolve the log dir FIRST so every subsequent step is logged. D-01
+    # allows CLI override; fall back to platformdirs.user_log_dir() which
+    # auto-creates the directory (ensure_exists=True in the helper).
+    log_dir = args.log_dir or user_log_dir()
+    _configure_logging(log_dir)
+    log = logging.getLogger(__name__)
+    log.info("[BOOT] app=%s port=%d log_dir=%s", LOL_DRAFT_APP_NAME, args.port, log_dir)
+
+    # cache_dir is exposed as a CLI flag for Phase 3 / tests. Phase 2 will
+    # wire it into json_repo.py; Phase 1 only needs the directory to exist
+    # so that the existing CACHE_FILE read path (now under user_cache_dir())
+    # has a valid parent.
+    cache_dir = args.cache_dir or user_cache_dir()
+    cache_dir.mkdir(parents=True, exist_ok=True)
+
+    # Make bundled certifi the source of truth for SSL (Pitfall #7 / D-10).
+    # In frozen mode the spec drops cacert.pem into _MEIPASS/certifi/; in
+    # dev mode the file does not exist at that path and requests falls
+    # back to its pip-installed certifi (also correct).
+    cacert = bundled_resource("certifi/cacert.pem")
+    if cacert.exists():
+        os.environ.setdefault("SSL_CERT_FILE", str(cacert))
+        os.environ.setdefault("REQUESTS_CA_BUNDLE", str(cacert))
+        log.info("[BOOT] SSL_CERT_FILE=%s", cacert)
+
+    # D-05: idempotent cleanup of stale ready-file. Must happen BEFORE
+    # the probe thread starts so the probe's atomic write is not racing
+    # with a host checking for the file.
+    if args.ready_file is not None and args.ready_file.exists():
+        args.ready_file.unlink()
+
+    # D-02 / D-03 + Pattern 4: spawn probe BEFORE socketio.run.
+    # daemon=True so it does not keep the process alive after the server
+    # returns from socketio.run (SIGTERM / CTRL_BREAK_EVENT / Ctrl+C).
+    probe = threading.Thread(
+        target=_probe_health_then_signal_ready,
+        args=(args.port, args.ready_file),
+        name="health-probe",
+        daemon=True,
+    )
+    probe.start()
+
+    # Legacy dev-mode startup banner (kept for parity with existing
+    # console-run ergonomics; CONVENTIONS preserves print-based prefixed
+    # output for existing code).
     print("=" * 60)
     print("COUNTERPICK DRAFT TRACKER BACKEND")
     print("=" * 60)
@@ -1744,8 +1987,25 @@ if __name__ == '__main__':
     print("  POST /api/set-role                  - Manuelle Rollen-Überschreibung")
     print("\n" + "=" * 60)
     print(f"Cache-Dauer: {CACHE_DURATION}s ({CACHE_DURATION // 60} Minuten)")
+    print(f"Bind: 127.0.0.1:{args.port}")
     print("=" * 60 + "\n")
-    
-    # Starte Server mit SocketIO
-    socketio.run(app, debug=True, host='0.0.0.0', port=5000)
+
+    # Security (Sec-7): bind loopback ONLY, never 0.0.0.0.
+    # debug=False: Werkzeug reloader spawns a subprocess that breaks
+    #   PyInstaller --onefile and the ready-file protocol (Pitfall #7 in
+    #   RESEARCH.md; RESEARCH.md Anti-Patterns table).
+    # allow_unsafe_werkzeug=True: Flask-SocketIO >=5 raises RuntimeError
+    #   in production without it; correct for a single-user localhost
+    #   desktop sidecar.
+    socketio.run(
+        app,
+        host="127.0.0.1",
+        port=args.port,
+        debug=False,
+        allow_unsafe_werkzeug=True,
+    )
+
+
+if __name__ == "__main__":
+    main()
 
