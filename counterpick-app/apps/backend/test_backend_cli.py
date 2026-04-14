@@ -73,17 +73,28 @@ def _spawn_backend(port: int, ready_file: Path) -> subprocess.Popen:
     )
 
 
-def _wait_for_ready_file(path: Path, timeout_s: float) -> dict:
+def _wait_for_ready_file(
+    path: Path, timeout_s: float, required_keys: set[str] | None = None
+) -> dict:
+    """Poll the ready-file until it contains the expected contract.
+
+    When ``required_keys`` is given, poll until the parsed JSON contains ALL of
+    those keys — this lets callers distinguish a pre-existing stale file from
+    a freshly-written one (D-05 stale-cleanup test).
+    """
+    required = required_keys if required_keys is not None else {"port", "pid", "ready_at"}
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:
         if path.exists():
             text = path.read_text(encoding="utf-8")
             try:
-                return json.loads(text)
+                payload = json.loads(text)
             except json.JSONDecodeError:
                 # Atomic-write contract should prevent this; tolerate one retry.
                 time.sleep(0.05)
                 continue
+            if required.issubset(payload.keys()):
+                return payload
         time.sleep(0.05)
     raise TimeoutError(f"ready-file did not appear within {timeout_s}s: {path}")
 

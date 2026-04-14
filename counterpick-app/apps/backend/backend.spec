@@ -62,18 +62,18 @@ a = Analysis(
     hooksconfig={},
     runtime_hooks=[],
     excludes=[
-        # Supabase family — never bundle (CONTEXT D-09). Eliminates credential
-        # leak surface (SUPABASE_SERVICE_ROLE_KEY cannot be extracted from a
-        # binary that doesn't contain the client) and trims ~3-5 MB from the
-        # bundle. supabase_repo.py imports STAY in source for dev mode; the
-        # bundled .exe simply cannot import them.
-        'supabase',
-        'gotrue',
-        'postgrest',
-        'realtime',
-        'storage3',
-        'supabase_functions',
-        'supabase_auth',
+        # NOTE: Phase 1 local-test discovery (2026-04-14): CONTEXT D-09 tried to
+        # exclude the supabase family here, but backend.py still imports
+        # `from lolalytics_api.supabase_repo import ...` at module load (per
+        # N-03, the full cutover to json_repo.py is Phase 2 work). Excluding
+        # supabase made the frozen .exe crash at startup with
+        # ModuleNotFoundError. Excludes are re-added in Phase 2 when the
+        # supabase_repo import is replaced by json_repo.
+        #
+        # Phase 2 will restore:
+        #     'supabase', 'gotrue', 'postgrest', 'realtime', 'storage3',
+        #     'supabase_functions', 'supabase_auth',
+        #
         # Locked async_mode='threading' — exclude the alternatives so PyInstaller
         # doesn't waste cycles trying to bundle them.
         'eventlet',
