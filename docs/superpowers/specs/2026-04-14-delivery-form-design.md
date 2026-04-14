@@ -346,6 +346,17 @@ Approach:
 
 Acceptance gates for the v1 release tag:
 
+**Supported game modes (in scope)**
+- Summoner's Rift draft-based queues where LCU exposes the champion-select session: Normal Draft, Ranked Solo/Duo, Ranked Flex, and Clash.
+- All five role positions (Top, Jungle, Mid, ADC, Support) are supported.
+- The existing "blind-pick recommendation mode" of the recommendation engine — i.e. producing recommendations when no enemy picks are yet visible within a draft — remains supported unchanged.
+
+**Unsupported game modes (out of scope by design)**
+- The LoL "Blind Pick" queue (structurally unsupported: it has no champion-select phase with visible picks/hovers/bans that the tool could observe).
+- ARAM, Arena, Nexus Blitz, TFT, and any other non-Summoner's-Rift mode (different data domain; lolalytics scoring data does not apply).
+- Co-op vs. AI queues (no matchup/meta data relevant).
+- Practice Tool and Custom games (no ranked meta context).
+
 **Build & distribution**
 - [ ] `.msi` installer is present as a GitHub Release asset.
 - [ ] Portable `.exe` is present as a GitHub Release asset.
@@ -411,7 +422,7 @@ Acceptance gates for the v1 release tag:
 - **User settings / preferences** (language, theme, role override) — no settings shipped in v1. When added, storage goes in Tauri app-data-dir via `@tauri-apps/plugin-store`.
 - **Telemetry, crash reporting** — not in v1 for privacy reasons. If later added, it must be opt-in.
 - **FastAPI migration** — only revisit if Flask becomes an actual bottleneck.
-- **ARAM or other non-draft modes** — out of scope.
+- **Non-Summoner's-Rift and non-draft game modes** (ARAM, Arena, Nexus Blitz, TFT, LoL Blind Pick queue, Co-op vs AI, Practice Tool, Custom games) — out of scope. See §8 "Supported/Unsupported game modes" for the full rationale. Supporting these would require separate data sources and is not planned.
 - **Overlay UX polish** — separate spec (Theme B in original brainstorming decomposition).
 - **GitHub-publishing readiness** (license selection, legal review of Lolalytics scraping, README polish) — separate spec (Theme A).
 
