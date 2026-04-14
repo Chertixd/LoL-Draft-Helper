@@ -1,0 +1,11 @@
+# PyInstaller output directories — per .planning/phases/01-sidecar-foundation/
+# 01-RESEARCH.md §"Runtime State Inventory", these MUST be ignored.
+dist/
+build/
+
+# PyInstaller spec backups
+*.spec.bak
+
+# Python bytecode caches
+__pycache__/
+*.pyc

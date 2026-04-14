@@ -9,3 +9,4 @@ python-socketio>=5.9.0
 websocket-client>=1.6.0
 supabase>=2.4.0
 python-dotenv
+platformdirs>=4.0.0
