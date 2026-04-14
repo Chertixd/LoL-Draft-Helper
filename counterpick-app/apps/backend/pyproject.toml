@@ -28,7 +28,9 @@ license = {text = "MIT"}
 
 [project.optional-dependencies]
 test = [
-    "pytest",
+    "pytest>=7",
+    "requests",
+    "python-socketio[client]>=5.9.0,<6",
 ]
 
 [project.urls]
