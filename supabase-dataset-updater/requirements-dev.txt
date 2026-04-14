@@ -1,0 +1,4 @@
+# Dev/CI deps for scripts/export_to_json.py — runtime GitHub Action installs these ad-hoc.
+pytest
+supabase>=2.4.0
+python-dotenv
