@@ -51,20 +51,33 @@ from supabase import Client, create_client
 SCHEMA_VERSION = 1  # CONTEXT D-05
 PAGE_SIZE = 1000  # supabase-py default page max; .range() uses inclusive bounds.
 
-# Tables to export. Order matters only for user-facing log output; the 9-table
-# conservative list includes dedicated `champions` and `patches` tables.
+# Tables to export. Verified against live Supabase on 2026-04-15.
+# `champion_stats_by_role` is NOT a table — it is a derived query over
+# `champion_stats` (see supabase_repo.get_champion_stats_by_role). The client
+# rebuilds it from champion_stats rows. `champions` and `patches` ship because
+# `champion_stats` carries `champion_key` not `name`, so key→name resolution
+# needs the `champions` table client-side.
 TABLES: tuple[str, ...] = (
     "champion_stats",
-    "champion_stats_by_role",
     "matchups",
     "synergies",
     "items",
     "runes",
     "summoner_spells",
-    "champions",  # orchestrator resolution #1 — ship unless runtime verification
-    # proves `name` is already present on champion_stats rows.
-    "patches",  # orchestrator resolution #1
+    "champions",
+    "patches",
 )
+
+# Tables that must be sharded per-patch so individual files fit under the
+# GitHub push limit (100 MB hard, ~50 MB soft). Verified against 2026-04-14
+# production sizes: matchups.json = 224 MB, synergies.json = 170 MB in a
+# single file; with 5 patches each shard is ~40 MB / ~34 MB, comfortably
+# under both limits.
+#
+# The client (json_repo.py) mirrors this exact set; any change here REQUIRES
+# a matching change in json_repo.PER_PATCH_TABLES — otherwise the client
+# fetches a non-existent URL.
+PER_PATCH_TABLES: frozenset[str] = frozenset({"matchups", "synergies"})
 
 
 def _json_default(obj: Any) -> Any:
@@ -126,6 +139,57 @@ def _fetch_table(client: Client, table: str) -> list[dict]:
     return all_rows
 
 
+def _fetch_table_for_patch(
+    client: Client, table: str, patch: str
+) -> list[dict]:
+    """
+    Paginate a Supabase table filtered to a single patch.
+
+    Same semantics as ``_fetch_table`` but with ``.eq("patch", patch)``
+    in the query chain. Used by ``export_table_per_patch`` to produce
+    one file per (table, patch) pair so individual files stay under
+    GitHub's 100 MB push limit.
+    """
+    all_rows: list[dict] = []
+    start = 0
+    while True:
+        end = start + PAGE_SIZE - 1  # inclusive on both ends
+        resp = (
+            client.table(table)
+            .select("*")
+            .eq("patch", patch)
+            .range(start, end)
+            .execute()
+        )
+        page = resp.data or []
+        all_rows.extend(page)
+        if len(page) < PAGE_SIZE:
+            break  # short page → end of table
+        start += PAGE_SIZE
+    return all_rows
+
+
+def _list_patches(client: Client) -> list[str]:
+    """
+    Return the list of distinct patch identifiers present in the ``patches``
+    table. Order is preserved (Supabase returns insertion order by default);
+    downstream consumers don't depend on sort order — each per-patch file
+    carries its own __meta envelope.
+    """
+    rows = _fetch_table(client, "patches")
+    # Deduplicate defensively even though the `patches` table is expected to
+    # be unique — defense-in-depth against upstream schema drift.
+    seen: set[str] = set()
+    patches: list[str] = []
+    for row in rows:
+        p = row.get("patch")
+        if p is None or p in seen:
+            continue
+        seen.add(p)
+        patches.append(p)
+    return patches
+
+
 def _atomic_write_json(path: Path, payload: dict) -> None:
     """
     Atomic write via tmp-file + os.replace (Pattern 2).
@@ -163,6 +227,40 @@ def export_table(client: Client, out_dir: Path, table: str) -> None:
     out_path = out_dir / f"{table}.json"
     _atomic_write_json(out_path, payload)
     print(f"[export] {table}: {len(rows)} rows -> {out_path}")
+
+
+def export_table_per_patch(
+    client: Client, out_dir: Path, table: str, patches: list[str]
+) -> None:
+    """
+    Shard one table into per-patch files: ``<table>_<patch>.json``.
+
+    Each file carries its own ``__meta`` envelope with sha256 computed over
+    that patch's row subset only — the canonical form is identical to
+    ``export_table`` so the client-side verification in ``json_repo._fetch_one``
+    is byte-compatible. Fails fast on the first (table, patch) error so the
+    whole run aborts with a partial state that CI's publish step will discard.
+    """
+    for patch in patches:
+        rows = _fetch_table_for_patch(client, table, patch)
+        payload = {
+            "__meta": {
+                "exported_at": datetime.now(timezone.utc)
+                .isoformat()
+                .replace("+00:00", "Z"),
+                "sha256": _canonical_rows_sha256(rows),
+                "row_count": len(rows),
+                "schema_version": SCHEMA_VERSION,
+                "source_table": table,
+                # `source_patch` pins the shard to its patch for any future
+                # client-side sanity check; harmless to older clients.
+                "source_patch": patch,
+            },
+            "rows": rows,
+        }
+        out_path = out_dir / f"{table}_{patch}.json"
+        _atomic_write_json(out_path, payload)
+        print(f"[export] {table}_{patch}: {len(rows)} rows -> {out_path}")
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -206,10 +304,35 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
 
+    # Resolve patch list eagerly so a per-patch table's first call doesn't
+    # silently export zero shards. If the `patches` table is empty we let
+    # the per-patch path raise — atomic-or-nothing (D-08) applies.
+    try:
+        patches = _list_patches(client)
+    except Exception as exc:  # noqa: BLE001 — intentional broad catch
+        msg = str(exc)
+        if url in msg:
+            msg = msg.replace(url, "<redacted>")
+        print(
+            f"[export] FATAL: could not list patches: {msg}",
+            file=sys.stderr,
+        )
+        return 1
+
     # CONTEXT D-08: atomic-or-nothing — fail fast on the first table error.
     for table in TABLES:
         try:
-            export_table(client, args.out_dir, table)
+            if table in PER_PATCH_TABLES:
+                if not patches:
+                    # A per-patch table with zero patches is a degenerate
+                    # state — the CDN would have no shards at all and the
+                    # client would 404 on first read. Fail loud.
+                    raise RuntimeError(
+                        f"no patches found; cannot shard per-patch table {table!r}"
+                    )
+                export_table_per_patch(client, args.out_dir, table, patches)
+            else:
+                export_table(client, args.out_dir, table)
         except Exception as exc:  # noqa: BLE001 — intentional broad catch
             # T-02-11: redact `exc` if it happens to contain the URL.
             # supabase-py exceptions can include the project URL; replace
@@ -220,7 +343,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"[export] FATAL: {table} failed: {msg}", file=sys.stderr)
             return 1
 
-    print(f"[export] all {len(TABLES)} tables exported to {args.out_dir}")
+    print(
+        f"[export] all {len(TABLES)} tables exported to {args.out_dir} "
+        f"(per-patch shards for: {sorted(PER_PATCH_TABLES)}; "
+        f"{len(patches)} patches)"
+    )
     return 0
 
 

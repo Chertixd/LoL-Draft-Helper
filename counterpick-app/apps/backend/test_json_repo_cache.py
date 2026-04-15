@@ -249,3 +249,95 @@ def test_cdn_unreachable_no_cache_raises_cdnerror(isolated_cache):
     ):
         with pytest.raises(json_repo.CDNError):
             json_repo._fetch_one("items")
+
+
+# ---------------------------------------------------------------------------
+# Per-patch sharding (matchups/synergies) — URLs and cache keys must carry
+# the ``_<patch>`` suffix so the client reads ``matchups_15.24.json`` from
+# the CDN instead of the (missing, too-large) single-file ``matchups.json``.
+# ---------------------------------------------------------------------------
+
+
+def test_non_per_patch_table_uses_plain_url_and_key(isolated_cache):
+    """``items`` is NOT per-patch → URL is ``.../items.json`` and cache
+    key is ``items`` regardless of any patch argument."""
+    body = {
+        "__meta": {"schema_version": 1, "sha256": "x", "row_count": 0},
+        "rows": [],
+    }
+    with patch(
+        "lolalytics_api.json_repo.requests.get",
+        return_value=_make_resp(200, body),
+    ) as get:
+        with patch("lolalytics_api.json_repo.hashlib.sha256") as m:
+            m.return_value.hexdigest.return_value = "x"
+            json_repo._fetch_one("items")
+
+    called_url = get.call_args.args[0]
+    assert called_url.endswith("/items.json"), (
+        f"non-per-patch URL must be plain: {called_url}"
+    )
+    # Cache key must be plain ``items.*`` — NOT ``items_<anything>``.
+    assert (isolated_cache / "items.json").exists()
+    assert (isolated_cache / "items.meta.json").exists()
+    assert not any(isolated_cache.glob("items_*.json"))
+
+
+def test_per_patch_table_uses_patched_url_and_cache_key(isolated_cache):
+    """``matchups`` IS per-patch → URL is ``.../matchups_<patch>.json``
+    and cache key is ``matchups_<patch>``."""
+    patch_id = "15.24"
+    body = {
+        "__meta": {"schema_version": 1, "sha256": "x", "row_count": 0},
+        "rows": [],
+    }
+    with patch(
+        "lolalytics_api.json_repo.requests.get",
+        return_value=_make_resp(200, body),
+    ) as get:
+        with patch("lolalytics_api.json_repo.hashlib.sha256") as m:
+            m.return_value.hexdigest.return_value = "x"
+            json_repo._fetch_one("matchups", patch_id)
+
+    called_url = get.call_args.args[0]
+    assert called_url.endswith(f"/matchups_{patch_id}.json"), (
+        f"per-patch URL must carry _<patch> suffix: {called_url}"
+    )
+    # Cache key is ``matchups_<patch>``; the plain key MUST NOT appear.
+    assert (isolated_cache / f"matchups_{patch_id}.json").exists()
+    assert (isolated_cache / f"matchups_{patch_id}.meta.json").exists()
+    assert not (isolated_cache / "matchups.json").exists()
+    assert not (isolated_cache / "matchups.meta.json").exists()
+
+
+def test_per_patch_table_without_patch_raises(isolated_cache):
+    """Calling ``_fetch_one('matchups')`` without a patch is a programming
+    error — raise ``ValueError`` rather than 404 at the CDN."""
+    with pytest.raises(ValueError, match="patch"):
+        json_repo._fetch_one("matchups")
+
+
+def test_per_patch_304_reuses_per_patch_cache(isolated_cache):
+    """A 304 for ``matchups_<patch>`` must read the per-patch cache body,
+    not the (non-existent) plain ``matchups.json`` path."""
+    patch_id = "16.1"
+    cached = {"__meta": {"schema_version": 1}, "rows": [{"id": 7}]}
+    (isolated_cache / f"matchups_{patch_id}.json").write_text(
+        json.dumps(cached), encoding="utf-8"
+    )
+    (isolated_cache / f"matchups_{patch_id}.meta.json").write_text(
+        json.dumps({"etag": 'W/"shard-old"'}),
+        encoding="utf-8",
+    )
+    with patch(
+        "lolalytics_api.json_repo.requests.get",
+        return_value=_make_resp(304, headers={"ETag": 'W/"shard-old"'}),
+    ) as get:
+        rows = json_repo._fetch_one("matchups", patch_id)
+
+    assert rows == [{"id": 7}]
+    sent = get.call_args.kwargs["headers"]
+    assert sent.get("If-None-Match") == 'W/"shard-old"'
+    # Confirm the URL actually carried the patch suffix.
+    called_url = get.call_args.args[0]
+    assert called_url.endswith(f"/matchups_{patch_id}.json")

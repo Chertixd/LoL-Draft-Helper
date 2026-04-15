@@ -79,6 +79,13 @@ _TABLES: Tuple[str, ...] = (
     "patches",
 )
 
+# Tables sharded per-patch by the exporter. The on-disk / on-CDN filename
+# for these is ``<table>_<patch>.json`` rather than ``<table>.json``, and
+# the cache key is likewise ``<table>_<patch>``. Must mirror
+# ``export_to_json.PER_PATCH_TABLES`` exactly — a mismatch on either side
+# produces a 404 on every fetch for the affected table.
+PER_PATCH_TABLES: frozenset = frozenset({"matchups", "synergies"})
+
 # CONTEXT D-05: client supports schema_version ≤ 1. Exported envelopes
 # with a higher version are rejected so a future v2 export cannot
 # silently deliver unexpected fields to a v1 client.
@@ -178,47 +185,70 @@ def _atomic_write_json(path: Path, payload: Any) -> None:
     os.replace(tmp, path)
 
 
-def _load_meta(table: str) -> Optional[dict]:
-    """Read ``<table>.meta.json`` or return ``None`` on missing/corrupt.
+def _resource_key(table: str, patch: Optional[str] = None) -> str:
+    """Return the cache/URL key for a table, appending ``_<patch>`` for
+    per-patch tables. Non-per-patch tables always yield the plain table
+    name — the ``patch`` argument is silently ignored in that case.
 
-    CONTEXT D-18: corrupt meta → delete both meta + body, return None so
-    the caller forces a fresh fetch.
+    Per-patch tables REQUIRE a non-empty patch; callers that forget to
+    resolve a default get a loud ``ValueError`` instead of a 404 at fetch
+    time (failing earlier and with a better message).
     """
-    meta_path = _cache_dir() / f"{table}.meta.json"
+    if table in PER_PATCH_TABLES:
+        if not patch:
+            raise ValueError(
+                f"table {table!r} is sharded per-patch; caller must pass "
+                f"a non-empty patch (got {patch!r})"
+            )
+        return f"{table}_{patch}"
+    return table
+
+
+def _load_meta(table: str, patch: Optional[str] = None) -> Optional[dict]:
+    """Read ``<key>.meta.json`` or return ``None`` on missing/corrupt.
+
+    ``key`` is ``table`` for non-per-patch tables, ``<table>_<patch>`` for
+    per-patch tables. CONTEXT D-18: corrupt meta → delete both meta + body,
+    return None so the caller forces a fresh fetch.
+    """
+    key = _resource_key(table, patch)
+    meta_path = _cache_dir() / f"{key}.meta.json"
     if not meta_path.exists():
         return None
     try:
         return json.loads(meta_path.read_text(encoding="utf-8"))
     except json.JSONDecodeError:
         logger.warning(
-            "[json_repo] corrupt meta for %s, deleting cache pair", table
+            "[json_repo] corrupt meta for %s, deleting cache pair", key
         )
         meta_path.unlink(missing_ok=True)
-        (_cache_dir() / f"{table}.json").unlink(missing_ok=True)
+        (_cache_dir() / f"{key}.json").unlink(missing_ok=True)
         return None
 
 
-def _load_body(table: str) -> Optional[dict]:
-    """Read ``<table>.json`` or return ``None`` on missing/corrupt.
+def _load_body(table: str, patch: Optional[str] = None) -> Optional[dict]:
+    """Read ``<key>.json`` or return ``None`` on missing/corrupt.
 
-    CONTEXT D-18: corrupt body → delete both meta + body.
+    ``key`` is ``table`` for non-per-patch tables, ``<table>_<patch>`` for
+    per-patch tables. CONTEXT D-18: corrupt body → delete both meta + body.
     """
-    body_path = _cache_dir() / f"{table}.json"
+    key = _resource_key(table, patch)
+    body_path = _cache_dir() / f"{key}.json"
     if not body_path.exists():
         return None
     try:
         return json.loads(body_path.read_text(encoding="utf-8"))
     except json.JSONDecodeError:
         logger.warning(
-            "[json_repo] corrupt body for %s, deleting cache pair", table
+            "[json_repo] corrupt body for %s, deleting cache pair", key
         )
         body_path.unlink(missing_ok=True)
-        (_cache_dir() / f"{table}.meta.json").unlink(missing_ok=True)
+        (_cache_dir() / f"{key}.meta.json").unlink(missing_ok=True)
         return None
 
 
-def _fetch_one(table: str) -> List[Dict[str, Any]]:
-    """Conditional-GET one table; return its ``rows`` list.
+def _fetch_one(table: str, patch: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Conditional-GET one table (or per-patch shard); return its ``rows`` list.
 
     Happy path (200): verify schema_version + sha256, atomically write
     body + meta, clear stale flag, return rows.
@@ -226,9 +256,13 @@ def _fetch_one(table: str) -> List[Dict[str, Any]]:
     Network error + cache present: return cached rows, SET stale flag.
     Network error + no cache: raise CDNError.
     4xx/5xx, schema_version > 1, sha256 mismatch: raise CDNError.
+
+    For ``table`` in ``PER_PATCH_TABLES``, ``patch`` MUST be a non-empty
+    string; URL and cache key both become ``<table>_<patch>``.
     """
-    url = f"{CDN_BASE_URL}/{table}.json"
-    meta = _load_meta(table)
+    key = _resource_key(table, patch)
+    url = f"{CDN_BASE_URL}/{key}.json"
+    meta = _load_meta(table, patch)
     headers: Dict[str, str] = {}
     if meta:
         etag = meta.get("etag")
@@ -242,35 +276,35 @@ def _fetch_one(table: str) -> List[Dict[str, Any]]:
         resp = requests.get(url, headers=headers, timeout=_HTTP_TIMEOUT)
     except requests.RequestException as exc:
         # CONTEXT D-19: unreachable CDN — fall back to cache + stale flag.
-        body = _load_body(table)
+        body = _load_body(table, patch)
         if body is not None:
             with _stale_state_lock:
-                _stale_state[table] = True
+                _stale_state[key] = True
             logger.warning(
-                "[json_repo] CDN unreachable, using cached %s (stale)", table
+                "[json_repo] CDN unreachable, using cached %s (stale)", key
             )
             return body.get("rows", [])
         # No cache on disk → loud failure. Phase 3 UX wraps this in a
         # friendly banner; for now backend startup aborts.
-        raise CDNError(f"CDN unreachable and no cache for {table}: {exc}") from exc
+        raise CDNError(f"CDN unreachable and no cache for {key}: {exc}") from exc
 
     if resp.status_code == 304:
-        body = _load_body(table)
+        body = _load_body(table, patch)
         if body is None:
             # Degenerate: server said "not modified" but our cache
             # vanished. Drop the ETag and force a full refetch.
             logger.warning(
-                "[json_repo] 304 but cache missing for %s; refetching", table
+                "[json_repo] 304 but cache missing for %s; refetching", key
             )
-            return _fetch_one_unconditional(table)
+            return _fetch_one_unconditional(table, patch)
         with _stale_state_lock:
-            _stale_state[table] = False
+            _stale_state[key] = False
         return body.get("rows", [])
 
     if resp.status_code != 200:
         snippet = (resp.text or "")[:200]
         raise CDNError(
-            f"CDN returned {resp.status_code} for {table}: {snippet}"
+            f"CDN returned {resp.status_code} for {key}: {snippet}"
         )
 
     body = resp.json()  # shape: {"__meta": {...}, "rows": [...]}
@@ -280,13 +314,13 @@ def _fetch_one(table: str) -> List[Dict[str, Any]]:
     schema_v = meta_block.get("schema_version")
     if schema_v is None or schema_v > _SCHEMA_VERSION_MAX:
         raise CDNError(
-            f"Unsupported schema_version={schema_v} for {table}; "
+            f"Unsupported schema_version={schema_v} for {key}; "
             f"client supports {_SCHEMA_VERSION_MAX}"
         )
     if schema_v < _SCHEMA_VERSION_MAX:
         logger.warning(
             "[json_repo] %s has older schema_version=%d; proceeding",
-            table,
+            key,
             schema_v,
         )
 
@@ -301,14 +335,14 @@ def _fetch_one(table: str) -> List[Dict[str, Any]]:
     ).hexdigest()
     if expected and expected != actual:
         raise CDNError(
-            f"sha256 mismatch for {table}: expected {expected}, got {actual}"
+            f"sha256 mismatch for {key}: expected {expected}, got {actual}"
         )
 
     # CONTEXT D-17: atomic write body + sibling meta.
     cache = _cache_dir()
-    _atomic_write_json(cache / f"{table}.json", body)
+    _atomic_write_json(cache / f"{key}.json", body)
     _atomic_write_json(
-        cache / f"{table}.meta.json",
+        cache / f"{key}.meta.json",
         {
             "etag": resp.headers.get("ETag"),
             "last_modified": resp.headers.get("Last-Modified"),
@@ -317,34 +351,49 @@ def _fetch_one(table: str) -> List[Dict[str, Any]]:
         },
     )
     with _stale_state_lock:
-        _stale_state[table] = False
-    logger.info("[json_repo] fetched %s (%d rows)", table, len(rows))
+        _stale_state[key] = False
+    logger.info("[json_repo] fetched %s (%d rows)", key, len(rows))
     return rows
 
 
-def _fetch_one_unconditional(table: str) -> List[Dict[str, Any]]:
+def _fetch_one_unconditional(
+    table: str, patch: Optional[str] = None
+) -> List[Dict[str, Any]]:
     """Drop the cache pair and force a 200. Recovery helper for 304+missing."""
+    key = _resource_key(table, patch)
     cache = _cache_dir()
-    (cache / f"{table}.json").unlink(missing_ok=True)
-    (cache / f"{table}.meta.json").unlink(missing_ok=True)
-    return _fetch_one(table)
+    (cache / f"{key}.json").unlink(missing_ok=True)
+    (cache / f"{key}.meta.json").unlink(missing_ok=True)
+    return _fetch_one(table, patch)
 
 
 def warm_cache() -> None:
-    """Startup fan-out: 9 conditional GETs in parallel, populate ``_data``.
+    """Startup fan-out: conditional GETs in parallel, populate ``_data``.
+
+    Per-patch tables are skipped at warm-up — they're sharded into one
+    file per patch and the full set would be ``len(PER_PATCH_TABLES) *
+    len(patches)`` fetches, which wastes disk and time when most callers
+    only need the latest patch. Per-patch shards are fetched lazily by
+    ``_table(name, patch)`` on first use.
 
     Called from ``backend.py main()`` in Plan 02-04. Any ``CDNError`` from
     a worker future propagates and aborts startup (loud-fail per D-19).
     """
+    eager = tuple(t for t in _TABLES if t not in PER_PATCH_TABLES)
     with ThreadPoolExecutor(max_workers=_FAN_OUT_MAX_WORKERS) as ex:
-        future_to_table = {ex.submit(_fetch_one, t): t for t in _TABLES}
+        future_to_table = {ex.submit(_fetch_one, t): t for t in eager}
         results: Dict[str, List[Dict[str, Any]]] = {}
         for fut in as_completed(future_to_table):
             t = future_to_table[fut]
             results[t] = fut.result()  # propagates CDNError on failure
     with _data_lock:
         _data.update(results)
-    logger.info("[json_repo] warm_cache complete; %d tables loaded", len(results))
+    logger.info(
+        "[json_repo] warm_cache complete; %d tables loaded (per-patch "
+        "tables %s fetched lazily)",
+        len(results),
+        sorted(PER_PATCH_TABLES),
+    )
 
 
 def stale_status() -> Dict[str, bool]:
@@ -353,18 +402,25 @@ def stale_status() -> Dict[str, bool]:
         return dict(_stale_state)
 
 
-def _table(name: str) -> List[Dict[str, Any]]:
+def _table(name: str, patch: Optional[str] = None) -> List[Dict[str, Any]]:
     """Return the row list for ``name``; lazy-fetch on cache miss.
 
-    Usually populated by ``warm_cache()`` at startup. Dev mode / cold
-    call without warm-up → single synchronous fetch.
+    For non-per-patch tables the ``patch`` argument is ignored and the
+    result is keyed by plain table name — preserves the pre-sharding
+    contract. For per-patch tables (``matchups``, ``synergies``) the
+    cache key becomes ``<name>_<patch>`` and the caller MUST pass a
+    non-empty patch; ``_resource_key`` raises ``ValueError`` otherwise.
+
+    Usually populated by ``warm_cache()`` at startup. Per-patch shards
+    and any dev-mode cold call → single synchronous fetch.
     """
+    key = _resource_key(name, patch)
     with _data_lock:
-        if name in _data:
-            return _data[name]
-    rows = _fetch_one(name)
+        if key in _data:
+            return _data[key]
+    rows = _fetch_one(name, patch)
     with _data_lock:
-        _data[name] = rows
+        _data[key] = rows
     return rows
 
 
@@ -551,7 +607,7 @@ def get_matchups(
 
     rows = [
         r
-        for r in _table("matchups")
+        for r in _table("matchups", patch)
         if r.get("patch") == patch
         and r.get("champion_key") == champion_key
         and r.get("role") == role
@@ -679,7 +735,7 @@ def get_synergies(
 
     rows = [
         r
-        for r in _table("synergies")
+        for r in _table("synergies", patch)
         if r.get("patch") == patch
         and r.get("champion_key") == champion_key
         and r.get("role") == role

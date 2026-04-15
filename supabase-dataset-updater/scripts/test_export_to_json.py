@@ -37,6 +37,14 @@ def _make_mock_client(rows_by_table: dict[str, list[dict]]) -> MagicMock:
     returns an object with `.data` equal to the slice of
     `rows_by_table[name]` inside the inclusive range [s, e].
 
+    Also supports the per-patch query chain used by
+    ``_fetch_table_for_patch``:
+
+        .table(name).select("*").eq("patch", <p>).range(s, e).execute()
+
+    ``.eq("patch", p)`` filters ``rows_by_table[name]`` by ``row["patch"] == p``
+    before pagination — mirrors supabase-py's ``.eq().range()`` semantics.
+
     Unknown tables produce an empty list (so we can simulate missing tables).
     """
     client = MagicMock(name="supabase_client")
@@ -45,12 +53,12 @@ def _make_mock_client(rows_by_table: dict[str, list[dict]]) -> MagicMock:
         rows = rows_by_table.get(name, [])
         table_mock = MagicMock(name=f"table({name})")
 
-        def select_factory(*_args, **_kwargs):
-            select_mock = MagicMock(name=f"select({name})")
+        def _build_range_chain(source_rows: list[dict], label: str):
+            """Attach a ``.range(start, end).execute()`` chain over ``source_rows``."""
+            select_mock = MagicMock(name=label)
 
             def range_factory(start: int, end: int):
-                # supabase-py .range() uses INCLUSIVE bounds on both ends.
-                slice_rows = rows[start : end + 1]
+                slice_rows = source_rows[start : end + 1]
                 range_mock = MagicMock(name=f"range({start},{end})")
                 exec_result = MagicMock(name="execute_result")
                 exec_result.data = slice_rows
@@ -58,6 +66,19 @@ def _make_mock_client(rows_by_table: dict[str, list[dict]]) -> MagicMock:
                 return range_mock
 
             select_mock.range.side_effect = range_factory
+            return select_mock
+
+        def select_factory(*_args, **_kwargs):
+            select_mock = _build_range_chain(rows, f"select({name})")
+
+            def eq_factory(column: str, value):
+                filtered = [r for r in rows if r.get(column) == value]
+                eq_mock = _build_range_chain(
+                    filtered, f"eq({name},{column}={value})"
+                )
+                return eq_mock
+
+            select_mock.eq.side_effect = eq_factory
             return select_mock
 
         table_mock.select.side_effect = select_factory
@@ -68,15 +89,19 @@ def _make_mock_client(rows_by_table: dict[str, list[dict]]) -> MagicMock:
 
 
 def _rows_for_all_tables() -> dict[str, list[dict]]:
-    """Plausible-shape fixture rows for every table in export_to_json.TABLES."""
-    # We don't assume the exact TABLES list — we populate all 9 possible names.
+    """Plausible-shape fixture rows for every table in export_to_json.TABLES.
+
+    Two patches (``15.24`` and ``16.1``) are present so the per-patch
+    sharding path in ``export_table_per_patch`` is exercised with >1
+    shard per per-patch table. Non-per-patch tables carry rows tagged
+    with whichever patch is convenient; they are written as single files
+    regardless.
+    """
     return {
         "champion_stats": [
             {"patch": "15.24", "champion_key": "266", "role": "top", "games": 100, "wins": 55},
             {"patch": "15.24", "champion_key": "103", "role": "middle", "games": 200, "wins": 110},
-        ],
-        "champion_stats_by_role": [
-            {"patch": "15.24", "champion_key": "266", "role": "top", "pick_rate": Decimal("0.05")},
+            {"patch": "16.1", "champion_key": "266", "role": "top", "games": 90, "wins": 50},
         ],
         "matchups": [
             {
@@ -87,7 +112,16 @@ def _rows_for_all_tables() -> dict[str, list[dict]]:
                 "opponent_role": "top",
                 "games": 80,
                 "wins": 40,
-            }
+            },
+            {
+                "patch": "16.1",
+                "champion_key": "266",
+                "role": "top",
+                "opponent_key": "122",
+                "opponent_role": "top",
+                "games": 75,
+                "wins": 42,
+            },
         ],
         "synergies": [
             {
@@ -98,13 +132,22 @@ def _rows_for_all_tables() -> dict[str, list[dict]]:
                 "mate_role": "support",
                 "games": 50,
                 "wins": 28,
-            }
+            },
+            {
+                "patch": "16.1",
+                "champion_key": "266",
+                "role": "top",
+                "mate_key": "412",
+                "mate_role": "support",
+                "games": 55,
+                "wins": 30,
+            },
         ],
         "items": [{"patch": "15.24", "item_id": 6701, "name": "Opportunity", "gold": 2700}],
         "runes": [{"patch": "15.24", "rune_id": 8005, "data": {"id": 8005, "key": "PressTheAttack"}}],
         "summoner_spells": [{"patch": "15.24", "spell_key": "4", "name": "Flash"}],
         "champions": [{"key": "266", "name": "Aatrox"}, {"key": "103", "name": "Ahri"}],
-        "patches": [{"patch": "15.24"}],
+        "patches": [{"patch": "15.24"}, {"patch": "16.1"}],
     }
 
 
@@ -269,11 +312,17 @@ def test_any_table_failure_aborts(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
 
     Partial files on disk BEFORE the failing table are tolerated locally
     (D-08 atomicity is enforced by Plan 02-03's gh-pages publish step).
+    Expected file count is (non-per-patch-tables) + (per-patch-tables ×
+    patches) once sharding is fully applied; for the abort path we only
+    assert the failing table's file is missing and total files < that
+    ceiling.
     """
     rows_by_table = _rows_for_all_tables()
 
     fake_client = _make_mock_client(rows_by_table)
-    # Make .table("items") raise on the first call.
+    # Make .table("items") raise on the first call. `patches` must still
+    # succeed — main() calls _list_patches() before entering the per-table
+    # loop, so the boom only fires for `items`.
     original_side_effect = fake_client.table.side_effect
 
     def boom(name: str):
@@ -297,18 +346,30 @@ def test_any_table_failure_aborts(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
     # `items` file must NOT exist (it's the failing table).
     assert not (tmp_path / "items.json").exists()
 
-    # At most N-1 of the N tables wrote a file (D-08 semantics, enforced
-    # at CI-publish time by Plan 02-03).
+    # Upper bound on successful writes = (non-per-patch tables) +
+    # (per-patch tables × patches). We only require strictly less than
+    # that — the failing table interrupts the loop.
+    num_patches = len(rows_by_table["patches"])
+    max_files = (
+        len(export_to_json.TABLES) - len(export_to_json.PER_PATCH_TABLES)
+    ) + len(export_to_json.PER_PATCH_TABLES) * num_patches
     written = list(tmp_path.glob("*.json"))
-    assert len(written) < len(export_to_json.TABLES)
+    assert len(written) < max_files
 
 
 def test_end_to_end_mocked_supabase_nine_tables(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """
-    Running main() against a fully mocked client writes one file per TABLES
-    entry, each with a valid envelope + round-trippable sha256.
+    Running main() against a fully mocked client writes one file per
+    non-per-patch TABLES entry + one file per (per-patch-table × patch)
+    combo, each with a valid envelope + round-trippable sha256.
+
+    Name is kept for git-blame stability; the actual file count is
+    ``(TABLES − PER_PATCH_TABLES) + PER_PATCH_TABLES × patches`` — the
+    fixture provides 2 patches so ``matchups`` and ``synergies`` each
+    produce 2 files. A naïve single-file ``matchups.json`` /
+    ``synergies.json`` MUST NOT exist after the run.
     """
     rows_by_table = _rows_for_all_tables()
     fake_client = _make_mock_client(rows_by_table)
@@ -323,17 +384,53 @@ def test_end_to_end_mocked_supabase_nine_tables(
     rc = export_to_json.main(["--out-dir", str(tmp_path)])
     assert rc == 0, "expected exit code 0 on full success"
 
+    patches = [r["patch"] for r in rows_by_table["patches"]]
+    assert len(patches) >= 2, "fixture must supply >=2 patches to exercise sharding"
+
+    # Build expected filename set: single file for non-per-patch tables,
+    # one file per (table, patch) for per-patch tables.
+    expected_names: list[str] = []
+    for table in export_to_json.TABLES:
+        if table in export_to_json.PER_PATCH_TABLES:
+            for patch_id in patches:
+                expected_names.append(f"{table}_{patch_id}.json")
+        else:
+            expected_names.append(f"{table}.json")
+    expected = sorted(expected_names)
+
     written = sorted(p.name for p in tmp_path.glob("*.json"))
-    expected = sorted(f"{t}.json" for t in export_to_json.TABLES)
     assert written == expected, f"wrong file set: {written} != {expected}"
 
+    # Naïve single-file shapes for per-patch tables MUST NOT exist.
+    for per_patch_table in export_to_json.PER_PATCH_TABLES:
+        assert not (tmp_path / f"{per_patch_table}.json").exists(), (
+            f"unsharded {per_patch_table}.json written — sharding regression"
+        )
+
+    # Explicit presence check for each per-patch shard.
+    for per_patch_table in export_to_json.PER_PATCH_TABLES:
+        for patch_id in patches:
+            shard = tmp_path / f"{per_patch_table}_{patch_id}.json"
+            assert shard.exists(), f"missing per-patch shard: {shard.name}"
+
     # Per-file envelope validation + sha256 round-trip.
-    for table in export_to_json.TABLES:
-        body = json.loads((tmp_path / f"{table}.json").read_text(encoding="utf-8"))
+    for filename in expected:
+        body = json.loads((tmp_path / filename).read_text(encoding="utf-8"))
         assert set(body.keys()) == {"__meta", "rows"}
         assert body["__meta"]["schema_version"] == 1
-        assert body["__meta"]["source_table"] == table
         assert body["__meta"]["row_count"] == len(body["rows"])
+
+        # `source_table` is always the base table name (without patch suffix).
+        stem = filename[: -len(".json")]
+        source_table = body["__meta"]["source_table"]
+        if source_table in export_to_json.PER_PATCH_TABLES:
+            # Filename matches <source_table>_<source_patch>.
+            assert stem == f"{source_table}_{body['__meta']['source_patch']}"
+            # Every row in a shard belongs to its own patch.
+            for row in body["rows"]:
+                assert row.get("patch") == body["__meta"]["source_patch"]
+        else:
+            assert stem == source_table
 
         # Re-verify sha256 (this is the json_repo-side check).
         recomputed = hashlib.sha256(
@@ -346,4 +443,4 @@ def test_end_to_end_mocked_supabase_nine_tables(
         ).hexdigest()
         assert (
             recomputed == body["__meta"]["sha256"]
-        ), f"sha256 mismatch on {table}.json — canonical form divergence"
+        ), f"sha256 mismatch on {filename} — canonical form divergence"
