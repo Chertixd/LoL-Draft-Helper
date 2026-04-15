@@ -4,6 +4,9 @@ on:
         - cron: "0 12 * * *"
     workflow_dispatch:
 
+permissions:
+    contents: write
+
 jobs:
     update:
         runs-on: ubuntu-latest
@@ -29,3 +32,38 @@ jobs:
                   SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
                   SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
 
+            # ============================================================
+            # Phase 2 additions — Supabase -> JSON export -> gh-pages publish
+            # See docs/DATA-PIPELINE.md for the operator runbook, canonical
+            # sha256 invariant, and rollback procedure.
+            # CONTEXT D-02, D-03, D-06, D-07; Plan 02-03.
+            # ============================================================
+
+            - name: Setup Python 3.12 for export
+              uses: actions/setup-python@v5
+              with:
+                  python-version: "3.12.x"
+
+            - name: Install Python deps for export
+              working-directory: supabase-dataset-updater
+              run: |
+                  python -m pip install --upgrade pip
+                  pip install -r requirements-dev.txt
+
+            - name: Export Supabase tables to JSON
+              working-directory: supabase-dataset-updater
+              run: python scripts/export_to_json.py --out-dir ./public/data
+              env:
+                  SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+                  SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+
+            - name: Publish to gh-pages branch
+              uses: peaceiris/actions-gh-pages@v4
+              with:
+                  github_token: ${{ secrets.GITHUB_TOKEN }}
+                  publish_dir: ./supabase-dataset-updater/public
+                  publish_branch: gh-pages
+                  force_orphan: true
+                  user_name: 'github-actions[bot]'
+                  user_email: 'github-actions[bot]@users.noreply.github.com'
+                  commit_message: 'data: refresh ${{ github.run_id }}'
