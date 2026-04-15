@@ -1,8 +1,9 @@
 # CDN Data Pipeline — Operator Runbook
 
 **Last updated:** 2026-04-14 (Phase 2 shipped)
-**Canonical repo:** Chertixd/LoL-Draft-Helper
-**CDN base URL:** https://chertixd.github.io/LoL-Draft-Helper/data
+**Canonical repo:** Chertixd/LoL-Draft-Helper (private — code only)
+**CDN repo:** Chertixd/lol-draft-helper-cdn (public — data only)
+**CDN base URL:** https://chertixd.github.io/lol-draft-helper-cdn/data
 **Schema version (current):** 1
 
 This document is the single operator reference for the CDN data plane. Its target reader is the solo developer (you) returning six months from now and needing to bootstrap a fresh fork, rotate the `gh-pages` branch, roll back a bad export, or debug a GitHub Pages edge-cache miss.
@@ -10,7 +11,7 @@ This document is the single operator reference for the CDN data plane. Its targe
 ## Contents
 
 1. [Overview](#1-overview)
-2. [One-time `gh-pages` bootstrap (D-27)](#2-one-time-gh-pages-bootstrap-d-27)
+2. [One-time bootstrap (D-27)](#2-one-time-bootstrap-d-27)
 3. [GitHub Pages enablement (D-28) — **MANUAL OPERATOR ACTION**](#3-github-pages-enablement-d-28--manual-operator-action)
 4. [Triggering the workflow](#4-triggering-the-workflow)
 5. [Canonical sha256 form (pin this)](#5-canonical-sha256-form-pin-this)
@@ -22,7 +23,9 @@ This document is the single operator reference for the CDN data plane. Its targe
 
 ## 1. Overview
 
-Supabase is the source of truth. The existing TypeScript ETL (`supabase-dataset-updater/src/supabase-etl.ts`) writes Supabase nightly. A new Python step (`supabase-dataset-updater/scripts/export_to_json.py`) then exports **8 Supabase tables to 16 JSON files** (per-patch sharding — see below) under `supabase-dataset-updater/public/data/`. `peaceiris/actions-gh-pages@v4` with `force_orphan: true` publishes that directory as the entire contents of the `gh-pages` branch. GitHub Pages serves it at `https://chertixd.github.io/LoL-Draft-Helper/data/<table>.json`. On the client, `counterpick-app/apps/backend/src/lolalytics_api/json_repo.py` issues conditional GETs (ETag / Last-Modified), verifies the `__meta.sha256` against a canonical serialization of the `rows`, and mirrors the payload into a local cache.
+Supabase is the source of truth. The existing TypeScript ETL (`supabase-dataset-updater/src/supabase-etl.ts`) writes Supabase nightly. A new Python step (`supabase-dataset-updater/scripts/export_to_json.py`) then exports **8 Supabase tables to 16 JSON files** (per-patch sharding — see below) under `supabase-dataset-updater/public/data/`. `peaceiris/actions-gh-pages@v4` with `force_orphan: true` publishes that directory as the entire contents of the `gh-pages` branch on the **external CDN repo** (see two-repo note). GitHub Pages serves it at `https://chertixd.github.io/lol-draft-helper-cdn/data/<table>.json`. On the client, `counterpick-app/apps/backend/src/lolalytics_api/json_repo.py` issues conditional GETs (ETag / Last-Modified), verifies the `__meta.sha256` against a canonical serialization of the `rows`, and mirrors the payload into a local cache.
+
+**Two-repo split.** The code lives in the **private** `Chertixd/LoL-Draft-Helper` repo. The published JSON lives in the **public** `Chertixd/lol-draft-helper-cdn` repo, whose `gh-pages` branch is served via GitHub Pages. Free-tier GitHub Pages requires a public repo, so we cannot serve Pages directly from the private code repo. Instead, CI in the code repo builds the JSON, then `peaceiris` force-pushes the build into the CDN repo's `gh-pages` branch using a fine-grained Personal Access Token (`CDN_DEPLOY_TOKEN`) scoped to that single repo with Contents: Read and write. End users only ever read from the CDN repo's Pages URL; they do not (and cannot) see the code repo.
 
 **Sharding note.** Six of the eight exported tables (`champion_stats`, `items`, `runes`, `summoner_spells`, `champions`, `patches`) ship as single `<table>.json` files. Two tables — `matchups` and `synergies` — exceed GitHub's push limits when shipped whole, so the exporter shards them per-patch as `matchups_<patch>.json` and `synergies_<patch>.json`, one file per patch in the `patches` table. The authoritative per-patch table list is the `PER_PATCH_TABLES` constant, declared identically in both `supabase-dataset-updater/scripts/export_to_json.py` (producer) and `counterpick-app/apps/backend/src/lolalytics_api/json_repo.py` (consumer). A mismatch on either side produces 404s on every fetch of the affected table.
 
@@ -30,26 +33,22 @@ With 5 active patches in production, the exporter currently produces 16 files: 6
 
 ---
 
-## 2. One-time `gh-pages` bootstrap (D-27)
+## 2. One-time bootstrap (D-27)
 
-Run these exact commands on a fresh clone of the repo (adjust `master` below if your default branch is `main`):
+The CDN-side `gh-pages` branch does **not** need to be hand-crafted. `peaceiris/actions-gh-pages@v4` with `force_orphan: true` creates it on the first publish run, as long as the CDN repo exists and has at least one commit on its default branch. The bootstrap is therefore a small checklist the operator runs once per fork:
 
-```sh
-git checkout --orphan gh-pages
-git rm -rf .
-echo "# LoL Draft Analyzer CDN — auto-generated, do not edit" > README.md
-git add README.md
-git commit -m "chore: bootstrap gh-pages orphan branch"
-git push -u origin gh-pages
-git checkout master
-```
+1. **Create the public CDN repo** `Chertixd/lol-draft-helper-cdn` on GitHub (Public, initialize with a README so it has at least one commit on `main`). Skip if it already exists.
+2. **Mint a fine-grained Personal Access Token** scoped to **only** `Chertixd/lol-draft-helper-cdn` with **Repository permissions → Contents: Read and write**. No other scopes. Set a sensible expiration and put a calendar reminder on the renewal date.
+3. **Add the PAT as a secret** on the code repo (NOT the CDN repo) at https://github.com/Chertixd/LoL-Draft-Helper/settings/secrets/actions → **New repository secret** → Name: `CDN_DEPLOY_TOKEN`, Value: the PAT from step 2.
+4. **Trigger the workflow once** (see [Section 4](#4-triggering-the-workflow)) — the "Publish to gh-pages branch" step creates the orphan `gh-pages` branch on the CDN repo automatically.
+5. **Enable Pages on the CDN repo** ([Section 3](#3-github-pages-enablement-d-28--manual-operator-action)) — this is the one step that cannot be automated.
 
-**Why bootstrap at all?** `peaceiris/actions-gh-pages@v4` with `force_orphan: true` *will* create the branch on first push if it is absent. But having the branch exist before the first CI run lets GitHub Pages be enabled in Settings *ahead of* data arrival — otherwise there is a 5–10 minute window where the CDN 404s because Pages was never configured. Bootstrap first, enable Pages second, run the workflow third.
+**Why this order?** Steps 1–3 provision auth. Step 4 creates the branch `peaceiris` will publish into (and any step earlier would have nothing to push). Step 5 turns on Pages now that the branch exists and has real content. Running 4 before 3 leaves a 5–10 minute 404 window; running 5 before 4 means the Pages config points at a branch that does not yet exist, which also 404s.
 
-After the push, confirm on the remote:
+After step 4, confirm on the CDN remote:
 
 ```sh
-git ls-remote --heads origin gh-pages
+git ls-remote --heads https://github.com/Chertixd/lol-draft-helper-cdn.git gh-pages
 ```
 
 Expected: one line showing a SHA followed by `refs/heads/gh-pages`.
@@ -58,18 +57,18 @@ Expected: one line showing a SHA followed by `refs/heads/gh-pages`.
 
 ## 3. GitHub Pages enablement (D-28) — **MANUAL OPERATOR ACTION**
 
-This step **cannot be automated** from a standard Claude session — it requires repo-admin UI interaction. The Phase 2 orchestrator gates Wave 3 (Plan 02-04 — the atomic cutover) on an operator confirmation that this step completed.
+This step **cannot be automated** from a standard Claude session — it requires repo-admin UI interaction on the CDN repo. The Phase 2 orchestrator gates Wave 3 (Plan 02-04 — the atomic cutover) on an operator confirmation that this step completed.
 
-1. Open https://github.com/Chertixd/LoL-Draft-Helper/settings/pages while logged in as a repo admin.
+1. Open https://github.com/Chertixd/lol-draft-helper-cdn/settings/pages while logged in as a repo admin.
 2. Under **Build and deployment**:
    - **Source:** *Deploy from a branch*.
    - **Branch:** `gh-pages` / `/ (root)`.
 3. Click **Save**.
-4. Wait 30–60 seconds. The Pages panel will display the published URL: `https://chertixd.github.io/LoL-Draft-Helper/`.
+4. Wait 30–60 seconds. The Pages panel will display the published URL: `https://chertixd.github.io/lol-draft-helper-cdn/`.
 5. Verify from the command line:
 
    ```sh
-   curl -sI https://chertixd.github.io/LoL-Draft-Helper/
+   curl -sI https://chertixd.github.io/lol-draft-helper-cdn/
    ```
 
    Expected: `HTTP/2 200`. A transient `HTTP/2 404` on a brand-new Pages site is tolerable — it resolves once the first successful workflow run publishes real content.
@@ -78,7 +77,7 @@ This step **cannot be automated** from a standard Claude session — it requires
 
 ## 4. Triggering the workflow
 
-The workflow is `supabase-dataset-updater/.github/workflows/update-dataset.yml`, named **Update Supabase Dataset**.
+The workflow is `supabase-dataset-updater/.github/workflows/update-dataset.yml`, named **Update Supabase Dataset**. It lives in the code repo and publishes into the CDN repo.
 
 - **Scheduled:** the cron `0 12 * * *` runs daily at 12:00 UTC.
 - **Manual:**
@@ -92,14 +91,14 @@ The workflow is `supabase-dataset-updater/.github/workflows/update-dataset.yml`,
 After a successful run, verify the envelope shape for the single-file `champion_stats` table:
 
 ```sh
-curl -s https://chertixd.github.io/LoL-Draft-Helper/data/champion_stats.json | \
+curl -s https://chertixd.github.io/lol-draft-helper-cdn/data/champion_stats.json | \
   python -c "import json, sys; b = json.load(sys.stdin); print('schema_version=%d row_count=%d exported_at=%s' % (b['__meta']['schema_version'], b['__meta']['row_count'], b['__meta']['exported_at']))"
 ```
 
 Then verify a per-patch shard exists and carries its own envelope (replace `16.7` with any patch in the live `patches` table):
 
 ```sh
-curl -s https://chertixd.github.io/LoL-Draft-Helper/data/matchups_16.7.json | \
+curl -s https://chertixd.github.io/lol-draft-helper-cdn/data/matchups_16.7.json | \
   python -c "import json, sys; b = json.load(sys.stdin); print('schema_version=%d row_count=%d source_patch=%s' % (b['__meta']['schema_version'], b['__meta']['row_count'], b['__meta'].get('source_patch', '<missing>')))"
 ```
 
@@ -129,21 +128,25 @@ If these kwargs drift between the exporter and the client, every fetch raises `C
 
 ## 6. Rollback
 
-`force_orphan: true` rewrites `gh-pages` history every push, so there is no `gh-pages^` to reach for. The only way back is to force-push a previous-good SHA.
+`force_orphan: true` rewrites `gh-pages` history every push, so there is no `gh-pages^` to reach for. The only way back is to force-push a previous-good SHA — and the branch lives on the **CDN repo**, not the code repo.
 
-1. Find the previous-good SHA from the GitHub Actions run list — each workflow run's publish step logs the commit SHA created on `gh-pages`. Alternatively, use the GitHub UI's **Actions → Update Supabase Dataset** run history.
-2. Fetch and force-push:
+1. Find the previous-good SHA from the GitHub Actions run list on the code repo — each workflow run's publish step logs the commit SHA it created on the CDN's `gh-pages`. Alternatively, use the GitHub UI's **Actions → Update Supabase Dataset** run history.
+2. Clone or navigate to a checkout of the CDN repo, then fetch and force-push:
 
    ```sh
+   # Run these against the CDN repo, not the code repo:
+   git clone https://github.com/Chertixd/lol-draft-helper-cdn.git /tmp/cdn-rollback
+   cd /tmp/cdn-rollback
    git fetch origin gh-pages
    git push --force origin <prev-good-sha>:gh-pages
    ```
 
+   Note: the force-push must be authenticated as a user (or PAT) with write access to the CDN repo — either your personal credentials or the `CDN_DEPLOY_TOKEN`.
 3. Wait up to 10 minutes for the Fastly edge cache to propagate (see [Troubleshooting](#8-troubleshooting) on stale caches).
 4. Verify the rolled-back version is serving:
 
    ```sh
-   curl -s https://chertixd.github.io/LoL-Draft-Helper/data/champion_stats.json | \
+   curl -s https://chertixd.github.io/lol-draft-helper-cdn/data/champion_stats.json | \
      python -c "import json, sys; print(json.load(sys.stdin)['__meta']['exported_at'])"
    ```
 
@@ -175,7 +178,7 @@ Each entry below is formatted as `symptom → diagnosis → fix`.
 **Diagnosis:**
 
 ```sh
-curl -sI https://chertixd.github.io/LoL-Draft-Helper/data/champion_stats.json | grep -iE '^(age|cache-control|x-cache):'
+curl -sI https://chertixd.github.io/lol-draft-helper-cdn/data/champion_stats.json | grep -iE '^(age|cache-control|x-cache):'
 ```
 
 Look at `Age: <seconds>` and `Cache-Control: max-age=600`. GitHub Pages sits behind Fastly, which caps staleness at the Fastly default of ~10 minutes.
@@ -184,11 +187,11 @@ Look at `Age: <seconds>` and `Cache-Control: max-age=600`. GitHub Pages sits beh
 
 ### 8.2 `peaceiris` step fails with permission error
 
-**Symptom:** The workflow's "Publish to gh-pages branch" step fails with `remote: Permission to <repo>.git denied to github-actions[bot]` or a similar 403 during `git push`.
+**Symptom:** The workflow's "Publish to gh-pages branch" step fails with `remote: Permission to <repo>.git denied` or a similar 403 during `git push`.
 
-**Diagnosis:** the workflow lacks `contents: write` scope.
+**Diagnosis:** the `CDN_DEPLOY_TOKEN` PAT is missing the **Contents: Read and write** scope on the CDN repo, OR the PAT's repository scope does not include `Chertixd/lol-draft-helper-cdn`. Note that `permissions: contents: write` at the top of the workflow YAML governs the default `GITHUB_TOKEN` — but the peaceiris step uses `personal_token` (the PAT), so the YAML-level permissions are not the issue.
 
-**Fix:** confirm `permissions: contents: write` exists at the top of `supabase-dataset-updater/.github/workflows/update-dataset.yml` (above `jobs:`). If missing, add it — it is the documented minimum for `peaceiris/actions-gh-pages@v4` to push to a branch.
+**Fix:** regenerate the PAT with **Repository access: Only select repositories → `Chertixd/lol-draft-helper-cdn`** and **Repository permissions → Contents: Read and write**. Replace the `CDN_DEPLOY_TOKEN` secret on the code repo with the new value.
 
 ### 8.3 Client logs `CDNError: sha256 mismatch`
 
@@ -200,13 +203,21 @@ Look at `Age: <seconds>` and `Cache-Control: max-age=600`. GitHub Pages sits beh
 
 ### 8.4 Per-patch shard 404s (`matchups_<patch>.json` not found)
 
-**Symptom:** The client fetches `https://chertixd.github.io/LoL-Draft-Helper/data/matchups_16.7.json` and receives `404`. The single-file tables (e.g., `items.json`) fetch fine.
+**Symptom:** The client fetches `https://chertixd.github.io/lol-draft-helper-cdn/data/matchups_16.7.json` and receives `404`. The single-file tables (e.g., `items.json`) fetch fine.
 
 **Diagnosis:** either (a) `PER_PATCH_TABLES` drifted between `export_to_json.py` and `json_repo.py` (producer thinks the table is single-file, client thinks it's sharded — or vice versa), or (b) the requested patch is not in the `patches` table, so no shard was produced for it.
 
 **Fix:** grep both files for `PER_PATCH_TABLES` — the two `frozenset({...})` literals must contain the same table names. For case (b), confirm the patch exists in Supabase's `patches` table; the client should only request shards for patches it read out of the canonical `patches.json`.
 
-### 8.5 Workflow fails at the export step with `missing required env var`
+### 8.5 `peaceiris` fails with "Bad credentials"
+
+**Symptom:** The workflow log shows `peaceiris/actions-gh-pages` exiting with `remote: Bad credentials` or `fatal: Authentication failed for 'https://github.com/Chertixd/lol-draft-helper-cdn.git/'`.
+
+**Diagnosis:** the `CDN_DEPLOY_TOKEN` secret is missing, expired, or was revoked. Fine-grained PATs have an expiration date and GitHub silently stops honoring them once they pass it.
+
+**Fix:** mint a new fine-grained PAT (scope as in [Section 2](#2-one-time-bootstrap-d-27), step 2), update the `CDN_DEPLOY_TOKEN` secret at https://github.com/Chertixd/LoL-Draft-Helper/settings/secrets/actions, and re-run the failed workflow. Put the new expiration on your calendar.
+
+### 8.6 Workflow fails at the export step with `missing required env var`
 
 **Symptom:** Workflow log shows `[export] FATAL: missing required env var: 'SUPABASE_URL'` or `'SUPABASE_SERVICE_ROLE_KEY'`.
 

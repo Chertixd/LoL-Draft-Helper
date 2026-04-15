@@ -53,7 +53,7 @@ logger = logging.getLogger(__name__)
 # user, so the default must be correct for production ship.
 CDN_BASE_URL = os.environ.get(
     "CDN_BASE_URL",
-    "https://chertixd.github.io/LoL-Draft-Helper/data",
+    "https://chertixd.github.io/lol-draft-helper-cdn/data",
 )
 
 # CONTEXT D-21: connect=5s, read=15s. Bounds the worst-case wait for one
