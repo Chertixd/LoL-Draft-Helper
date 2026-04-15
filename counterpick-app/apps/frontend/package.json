@@ -1,0 +1,30 @@
+{
+    "name": "@counterpick/frontend",
+    "version": "1.0.0",
+    "description": "Vue 3 Frontend für Counterpick App",
+    "type": "module",
+    "scripts": {
+        "dev": "vite",
+        "build": "vue-tsc --noEmit && vite build",
+        "preview": "vite preview",
+        "typecheck": "vue-tsc --noEmit",
+        "lint": "eslint --ext .ts,.tsx,.vue src"
+    },
+    "dependencies": {
+        "@counterpick/core": "workspace:*",
+        "vue": "^3.4.0",
+        "vue-router": "^4.2.5",
+        "pinia": "^2.1.7",
+        "axios": "^1.6.2",
+        "socket.io-client": "^4.7.2"
+    },
+    "devDependencies": {
+        "@vitejs/plugin-vue": "^4.5.2",
+        "typescript": "^5.3.2",
+        "vite": "^5.0.10",
+        "vue-tsc": "^1.8.25",
+        "@types/node": "^20.10.0"
+    },
+    "packageManager": "pnpm@9.2.0"
+}
+

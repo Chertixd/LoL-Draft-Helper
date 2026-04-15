@@ -1,0 +1,19 @@
+# =============================================
+# Game Assets - zu groß für git (2.6GB)
+# Download: https://developer.riotgames.com/docs/lol#data-dragon
+# =============================================
+dragontail-*/
+
+# =============================================
+# IDE / Tool Settings (lokal, nicht projektbezogen)
+# =============================================
+.claude/
+.cursor/
+.vscode/
+.idea/
+
+# =============================================
+# OS
+# =============================================
+.DS_Store
+Thumbs.db

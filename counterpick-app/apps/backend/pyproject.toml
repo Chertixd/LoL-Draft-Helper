@@ -1,0 +1,51 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lolalytics-api"
+version = "0.0.6"
+authors = [
+  { name="xPerSki" }
+]
+description = "Unofficial Lolalytics scraper"
+readme = "README.md"
+requires-python = ">=3.6"
+dependencies = [
+    "requests",
+    "lxml",
+    "supabase>=2.4.0",
+    "python-dotenv",
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Topic :: Games/Entertainment",
+    "Topic :: Internet :: WWW/HTTP :: Dynamic Content",
+]
+license = {text = "MIT"}
+
+[project.optional-dependencies]
+test = [
+    "pytest>=7",
+    "requests",
+    "python-socketio[client]>=5.9.0,<6",
+]
+
+[project.urls]
+Homepage = "https://github.com/xPerSki/lolalytics-api"
+Repository = "https://github.com/xPerSki/lolalytics-api"
+Issues = "https://github.com/xPerSki/lolalytics-api/issues"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-dir]
+"" = "src"
+
+[tool.pyright]
+extraPaths = ["src"]
+
+[tool.basedpyright]
+extraPaths = ["src"]
