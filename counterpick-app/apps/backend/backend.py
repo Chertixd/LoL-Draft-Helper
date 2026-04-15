@@ -8,7 +8,11 @@ from flask import Flask, jsonify, request
 from flask_cors import CORS
 from flask_socketio import SocketIO
 from lolalytics_api import get_champion_data, get_tierlist, matchup, patch_notes
-from lolalytics_api.supabase_repo import (
+# Phase 2 CDN-02..08: json_repo replaces supabase_repo on the runtime path.
+# The sb_* alias prefix is retained (D-22) so every downstream call site
+# (/api/tierlist, /api/matchups, etc.) is unchanged. supabase_client +
+# config imports are DROPPED — json_repo needs neither.
+from lolalytics_api.json_repo import (
     get_champion_stats as sb_get_champion_stats,
     get_champion_stats_by_role as sb_get_champion_stats_by_role,
     get_items as sb_get_items,
@@ -16,9 +20,14 @@ from lolalytics_api.supabase_repo import (
     get_summoner_spells as sb_get_summoner_spells,
     get_matchups as sb_get_matchups,
     get_synergies as sb_get_synergies,
+    warm_cache as _json_repo_warm_cache,
+    stale_status as _json_repo_stale_status,
+    CDNError as _json_repo_CDNError,
+    _table as _json_repo_table,
+    _resolve_champion as _json_repo_resolve_champion,
+    _get_latest_patch as _json_repo_get_latest_patch,
+    _normalize_slug as _json_repo_normalize_slug,
 )
-from lolalytics_api.supabase_client import get_supabase_client
-from lolalytics_api.config import get_supabase_url
 from league_client_api import is_league_client_running, get_draft_picks_bans, get_draft_session, get_gameflow_session
 from league_client_websocket import connect_to_league_client_websocket, disconnect_from_league_client_websocket, is_websocket_connected
 import argparse
@@ -210,11 +219,16 @@ def health_check():
         diagnostic keys (service, cache_entries, timestamp) are retained
         for backward compatibility with the existing dev-mode usage.
     """
+    # Phase 2 D-19: Phase 3 UX consumes `cached` to surface a per-table
+    # staleness indicator. Empty dict is the fresh-startup state (warm_cache
+    # has not written any 304/unreachable entries yet).
+    _cached = _json_repo_stale_status()
     return jsonify({
         'status': 'ok',
         'version': '1.0.0-dev',
         'service': 'lolalytics-backend',
         'cache_entries': len(cache),
+        'cached': _cached,
         'timestamp': datetime.now().isoformat()
     })
 
@@ -253,16 +267,17 @@ def get_available_patches():
     Sortiert nach created_at DESC (neueste zuerst)
     """
     try:
-        supabase = get_supabase_client()
-        res = (
-            supabase.table("patches")
-            .select("patch,created_at")
-            .order("created_at", desc=True)
-            .execute()
+        # Phase 2 CDN-08: read from the CDN-backed json_repo cache instead
+        # of the direct Supabase client. Sort semantics match supabase_repo's
+        # `order("created_at", desc=True)` — fall back to `patch` string sort
+        # when created_at is missing, mirroring json_repo._get_latest_patch.
+        patch_rows = list(_json_repo_table("patches"))
+        patch_rows.sort(
+            key=lambda r: (r.get("created_at") or "", r.get("patch") or ""),
+            reverse=True,
         )
-        
-        patches = [row["patch"] for row in (res.data or [])]
-        
+        patches = [row["patch"] for row in patch_rows]
+
         return jsonify({
             'success': True,
             'patches': patches
@@ -839,22 +854,20 @@ def get_champion_synergies(champion):
         # Ermittle die Rolle des Champions wenn nicht angegeben
         used_role = role
         if not used_role:
-            # Hole die meistgespielte Rolle aus champion_stats
-            supabase = get_supabase_client()
-            from lolalytics_api.supabase_repo import _resolve_champion, _get_latest_patch
-            champion_key, _ = _resolve_champion(champion_normalized)
-            current_patch = patch or _get_latest_patch()
-            role_res = (
-                supabase.table("champion_stats")
-                .select("role,games")
-                .eq("patch", current_patch)
-                .eq("champion_key", champion_key)
-                .order("games", desc=True)
-                .limit(1)
-                .execute()
-            )
-            if role_res.data:
-                used_role = role_res.data[0]["role"]
+            # Phase 2 CDN-08: resolve the most-played role from the CDN-backed
+            # champion_stats cache instead of a direct supabase query. Mirrors
+            # the original "order games desc limit 1" semantics.
+            champion_key, _ = _json_repo_resolve_champion(champion_normalized)
+            current_patch = patch or _json_repo_get_latest_patch()
+            role_rows = [
+                r
+                for r in _json_repo_table("champion_stats")
+                if r.get("patch") == current_patch
+                and r.get("champion_key") == champion_key
+            ]
+            if role_rows:
+                role_rows.sort(key=lambda r: r.get("games", 0) or 0, reverse=True)
+                used_role = role_rows[0].get("role")
         
         # Bestimme mate_role aus Mapping wenn nicht explizit angegeben
         if not mate_role and used_role:
@@ -971,13 +984,15 @@ def champion_name_to_key():
                 'error': 'championNames array required'
             }), 400
         
-        from lolalytics_api.supabase_repo import _resolve_champion, _normalize_slug
-        
+        # Phase 2 CDN-08: use json_repo's identical-signature helpers instead
+        # of supabase_repo. Both modules ship the same _resolve_champion +
+        # _normalize_slug contract (copied verbatim — see json_repo.py
+        # docstring).
         result = {}
         for name in champion_names:
             try:
-                normalized = _normalize_slug(name)
-                key, _ = _resolve_champion(normalized)
+                normalized = _json_repo_normalize_slug(name)
+                key, _ = _json_repo_resolve_champion(normalized)
                 result[name] = key
             except Exception as e:
                 # Champion nicht gefunden - verwende normalisierten Namen als Fallback
@@ -1958,6 +1973,19 @@ def main() -> None:
     # with a host checking for the file.
     if args.ready_file is not None and args.ready_file.exists():
         args.ready_file.unlink()
+
+    # Phase 2 CDN-08: warm the CDN cache before declaring ready. CDNError
+    # aborts startup loudly (Tauri's probe will time out and Phase 3's UX
+    # layer will replace this with a friendly error banner — first-run
+    # offline UX is intentionally deferred per D-19 + N-05).
+    try:
+        _json_repo_warm_cache()
+    except _json_repo_CDNError as exc:
+        log.error("[json_repo] warm_cache failed: %s", exc)
+        # Fail loud — do NOT write ready-file. Tauri will time out the probe
+        # and show the Phase 3 AV-troubleshooting dialog (TAURI-07).
+        os.write(2, f"[json_repo] warm_cache failed: {exc}\n".encode())
+        os._exit(2)
 
     # D-02 / D-03 + Pattern 4: spawn probe BEFORE socketio.run.
     # daemon=True so it does not keep the process alive after the server

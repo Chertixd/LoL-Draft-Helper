@@ -49,3 +49,12 @@ extraPaths = ["src"]
 
 [tool.basedpyright]
 extraPaths = ["src"]
+
+[tool.pytest.ini_options]
+# Plan 02-04 CDN-08: register the `contract` marker so `pytest -m contract`
+# filters cleanly and default runs skip live-credential tests.
+# Pitfall #7 mitigation: contract tests need live Supabase + CDN and the
+# opt-in `CDN_CONTRACT_TEST_ENABLE` env var; see test_json_repo_contract.py.
+markers = [
+    "contract: live-credential parity test (skipped by default; set CDN_CONTRACT_TEST_ENABLE=1 plus SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY to run)",
+]

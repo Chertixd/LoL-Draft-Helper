@@ -63,22 +63,19 @@ jobs:
         working-directory: counterpick-app/apps/backend
         run: pyinstaller --clean --noconfirm backend.spec
 
-      # NOTE: Phase 1 local-test discovery — the supabase exclusion is deferred
-      # to Phase 2. Phase 1 backend.py still imports supabase_repo at module
-      # load (per N-03), so excluding supabase from the bundle makes the .exe
-      # crash at startup. Phase 2 lands `json_repo.py` + removes the supabase
-      # import + re-adds the exclusion + re-enables this guard.
-      #
-      # Re-enable in Phase 2:
-      #   - name: Verify supabase NOT in bundle
-      #     working-directory: counterpick-app/apps/backend
-      #     shell: bash
-      #     run: |
-      #       command -v strings >/dev/null 2>&1 || { echo "::error::strings binary not available on runner" >&2; exit 1; }
-      #       if strings dist/backend-x86_64-pc-windows-msvc.exe | grep -i supabase; then
-      #         echo "::error::supabase strings leaked into the bundle"
-      #         exit 1
-      #       fi
+      # Phase 2 CDN-08: strings guard — dist/backend-x86_64-pc-windows-msvc.exe
+      # MUST NOT contain any supabase-family substrings after the import swap
+      # (D-22) + requirements.txt removal (D-23) + backend.spec excludes (D-24).
+      # Runs AFTER the PyInstaller build step, BEFORE the smoke_test_exe step.
+      - name: Verify supabase NOT in bundle
+        working-directory: counterpick-app/apps/backend
+        shell: bash
+        run: |
+          command -v strings >/dev/null 2>&1 || { echo "::error::strings binary not available on runner" >&2; exit 1; }
+          if strings dist/backend-x86_64-pc-windows-msvc.exe | grep -i supabase; then
+            echo "::error::supabase strings leaked into the bundle"
+            exit 1
+          fi
 
       # SIDE-04: Smoke-test the BUILT .exe — Socket.IO round-trip + HTTPS GET.
       - name: Smoke test built .exe

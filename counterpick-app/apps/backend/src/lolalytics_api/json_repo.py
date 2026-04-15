@@ -67,9 +67,15 @@ _FAN_OUT_MAX_WORKERS = 9
 
 # CONTEXT D-04 + orchestrator resolution #1: full table list exported by
 # Plan 02-02 and consumed here. Ordering is irrelevant to correctness.
+#
+# Plan 02-04 fix: ``champion_stats_by_role`` is NOT a standalone Supabase
+# table — ``get_champion_stats_by_role()`` reshapes the ``champion_stats``
+# rows client-side into the role-indexed dict the frontend expects. The
+# exporter (``export_to_json.TABLES``) correctly omits it; this list is
+# now aligned. A stray entry here produced a CDN 404 at ``warm_cache``
+# fan-out time (caught by the atomic cutover smoke test).
 _TABLES: Tuple[str, ...] = (
     "champion_stats",
-    "champion_stats_by_role",
     "matchups",
     "synergies",
     "items",

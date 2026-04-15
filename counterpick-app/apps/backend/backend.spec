@@ -62,18 +62,19 @@ a = Analysis(
     hooksconfig={},
     runtime_hooks=[],
     excludes=[
-        # NOTE: Phase 1 local-test discovery (2026-04-14): CONTEXT D-09 tried to
-        # exclude the supabase family here, but backend.py still imports
-        # `from lolalytics_api.supabase_repo import ...` at module load (per
-        # N-03, the full cutover to json_repo.py is Phase 2 work). Excluding
-        # supabase made the frozen .exe crash at startup with
-        # ModuleNotFoundError. Excludes are re-added in Phase 2 when the
-        # supabase_repo import is replaced by json_repo.
-        #
-        # Phase 2 will restore:
-        #     'supabase', 'gotrue', 'postgrest', 'realtime', 'storage3',
-        #     'supabase_functions', 'supabase_auth',
-        #
+        # Phase 2 CDN-08 (2026-04-14): restored from the Phase 1 deferral
+        # (commit 451e8f7). json_repo has now replaced supabase_repo on the
+        # runtime path, so the supabase family is safe to exclude — the
+        # bundle shrinks ~5 MB. supabase_repo.py stays in source for the
+        # contract tests (D-29) but is NOT imported by backend.py at module
+        # load, so PyInstaller does not pull the package chain in.
+        'supabase',
+        'gotrue',
+        'postgrest',
+        'realtime',
+        'storage3',
+        'supabase_functions',
+        'supabase_auth',
         # Locked async_mode='threading' — exclude the alternatives so PyInstaller
         # doesn't waste cycles trying to bundle them.
         'eventlet',
