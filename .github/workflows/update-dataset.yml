@@ -22,11 +22,14 @@ jobs:
               with:
                   node-version: "lts/*"
                   cache: "pnpm"
+                  cache-dependency-path: supabase-dataset-updater/pnpm-lock.yaml
 
             - name: Install dependencies
+              working-directory: supabase-dataset-updater
               run: pnpm install
 
             - name: Update Supabase dataset
+              working-directory: supabase-dataset-updater
               run: pnpm update
               env:
                   SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
