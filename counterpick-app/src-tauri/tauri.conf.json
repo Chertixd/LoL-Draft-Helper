@@ -24,19 +24,34 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["msi", "nsis"],
-    "icon": ["icons/icon.ico"],
-    "externalBin": ["binaries/backend"],
+    "targets": [
+      "msi",
+      "nsis"
+    ],
+    "icon": [
+      "icons/icon.ico"
+    ],
+    "externalBin": [
+      "binaries/backend"
+    ],
     "createUpdaterArtifacts": true,
     "windows": {
-      "webviewInstallMode": { "type": "downloadBootstrapper" },
-      "wix": { "language": ["en-US"] },
-      "nsis": { "installMode": "perUser" }
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper"
+      },
+      "wix": {
+        "language": [
+          "en-US"
+        ]
+      },
+      "nsis": {
+        "installMode": "perUser"
+      }
     }
   },
   "plugins": {
     "updater": {
-      "pubkey": "REPLACE_WITH_PUBLIC_KEY_AFTER_KEY_CEREMONY",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEMwOThFQTBBODIzRDZGOUIKUldTYmJ6MkNDdXFZd01ZSVZRK2VGVktRdGRWTkZ1bXN5dUZ0K3hzNmVFREZsSUpuajEvRXhXWk0K",
       "endpoints": [
         "https://chertixd.github.io/lol-draft-helper-cdn/latest.json"
       ]
