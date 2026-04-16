@@ -42,6 +42,8 @@ pub fn run() {
                 .level(log::LevelFilter::Info)
                 .build(),
         )
+        // Auto-updater plugin (UPD-01): checks gh-pages CDN for latest.json
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(SidecarState(Mutex::new(None)))
         .setup(|app| {
             let app_handle = app.handle().clone();

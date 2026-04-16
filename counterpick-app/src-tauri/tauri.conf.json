@@ -1,6 +1,6 @@
 {
   "productName": "LoL Draft Analyzer",
-  "version": "0.1.0-dev",
+  "version": "1.0.0",
   "identifier": "dev.till.lol-draft-analyzer",
   "build": {
     "beforeDevCommand": "pnpm --filter @counterpick/frontend dev",
@@ -23,6 +23,23 @@
     }
   },
   "bundle": {
-    "active": false
+    "active": true,
+    "targets": ["msi", "nsis"],
+    "icon": ["icons/icon.ico"],
+    "externalBin": ["binaries/backend"],
+    "createUpdaterArtifacts": true,
+    "windows": {
+      "webviewInstallMode": { "type": "downloadBootstrapper" },
+      "wix": { "language": ["en-US"] },
+      "nsis": { "installMode": "perUser" }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "REPLACE_WITH_PUBLIC_KEY_AFTER_KEY_CEREMONY",
+      "endpoints": [
+        "https://chertixd.github.io/lol-draft-helper-cdn/latest.json"
+      ]
+    }
   }
 }
