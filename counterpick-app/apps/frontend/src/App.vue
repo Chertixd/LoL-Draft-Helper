@@ -1,14 +1,22 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue';
 import { RouterView, RouterLink } from 'vue-router';
-import { checkBackendHealth } from '@/api/backend';
+import { checkBackendHealth, getLeagueClientStatus } from '@/api/backend';
+import { initBackendListeners } from '@/api/client';
 import { useDraftStore } from '@/stores/draft';
 import { useSettingsStore } from '@/stores/settings';
+import { useAppStatusStore } from '@/stores/appStatus';
 import PatchSelector from '@/components/common/PatchSelector.vue';
+import DisconnectedBanner from '@/components/ui/DisconnectedBanner.vue';
+import LolWaitingView from '@/components/ui/LolWaitingView.vue';
+import StalenessIndicator from '@/components/ui/StalenessIndicator.vue';
+import CdnProgressView from '@/components/ui/CdnProgressView.vue';
 
 const draftStore = useDraftStore();
 const settingsStore = useSettingsStore();
+const appStatus = useAppStatusStore();
 
+// Legacy backend status (retained for footer badge display)
 const backendStatus = ref<'checking' | 'online' | 'offline'>('checking');
 
 // League Client Status aus dem draftStore
@@ -18,21 +26,103 @@ const leagueClientStatus = computed(() => {
     return 'waiting';
 });
 
+/** Handle transition when CDN download finishes */
+async function onCdnReady() {
+    try {
+        const lcStatus = await getLeagueClientStatus();
+        if (lcStatus.client_running) {
+            appStatus.setRunning();
+        } else {
+            appStatus.setWaitingForLol();
+        }
+    } catch {
+        appStatus.setWaitingForLol();
+    }
+}
+
+/** Handle transition when LoL client connects */
+function onLolConnected() {
+    appStatus.setRunning();
+}
+
 onMounted(async () => {
+    // Initialize Tauri event listeners (backend-ready, backend-disconnected)
+    await initBackendListeners();
+
+    // Set up backend-disconnected handler for Tauri
+    if ('__TAURI__' in window) {
+        const { listen } = await import('@tauri-apps/api/event');
+        await listen('backend-disconnected', () => {
+            appStatus.setDisconnected();
+            backendStatus.value = 'offline';
+        });
+    }
+
     try {
         const response = await checkBackendHealth();
-        backendStatus.value = response.status === 'ok' ? 'online' : 'offline';
+        if (response.status === 'ok') {
+            backendStatus.value = 'online';
+            appStatus.setConnected();
+
+            // Check cache staleness from health response
+            const cached = (response as Record<string, unknown>).cached;
+            if (cached && typeof cached === 'object') {
+                const entries = Object.values(cached as Record<string, unknown>);
+                // stale_status returns Dict[str, bool] -- count stale vs total
+                const staleCount = entries.filter(v => v === true).length;
+                // Estimate age: if any table is stale, mark > 48h as a heuristic
+                const oldestHours = staleCount > 0 ? 72 : 0;
+                appStatus.updateCacheStatus({
+                    oldest_fetch_hours: oldestHours,
+                    newest_fetch_iso: null,
+                });
+            }
+
+            // Check status endpoint for CDN warm-up phase
+            try {
+                const statusResp = await fetch(
+                    ((await import('@/api/client')).getBackendURL
+                        ? await (await import('@/api/client')).getBackendURL()
+                        : '') + '/api/status'
+                );
+                if (statusResp.ok) {
+                    const statusData = await statusResp.json();
+                    if (statusData.phase === 'warming') {
+                        appStatus.setLoading(statusData.done ?? 0, statusData.total ?? 9);
+                        // CdnProgressView will take over polling
+                        settingsStore.loadPatches();
+                        return;
+                    }
+                }
+            } catch {
+                // /api/status not reachable; proceed to LoL check
+            }
+
+            // Check League Client status
+            const lcStatus = await getLeagueClientStatus();
+            if (lcStatus.client_running) {
+                appStatus.setRunning();
+            } else {
+                appStatus.setWaitingForLol();
+            }
+        } else {
+            backendStatus.value = 'offline';
+            appStatus.setDisconnected();
+        }
     } catch {
         backendStatus.value = 'offline';
+        appStatus.setDisconnected();
     }
-    
-    // Lade verfügbare Patches aus Supabase
+
     settingsStore.loadPatches();
 });
 </script>
 
 <template>
     <div class="app-container">
+        <!-- Disconnected banner at top (non-modal) -->
+        <DisconnectedBanner v-if="appStatus.state === 'disconnected'" />
+
         <header class="app-header">
             <div class="header-content">
                 <div class="header-row">
@@ -41,7 +131,7 @@ onMounted(async () => {
                             <span class="title-gradient">Counterpick</span>
                             <span class="title-subtitle">Draft Analyzer</span>
                         </h1>
-                        
+
                         <div class="nav-divider"></div>
 
                         <nav class="app-nav">
@@ -56,32 +146,44 @@ onMounted(async () => {
                 </div>
             </div>
         </header>
-        
+
         <main class="app-content">
-            <div v-if="backendStatus === 'offline'" class="backend-warning">
-                <span class="warning-icon">⚠️</span>
-                <div class="warning-text">
-                    <strong>Backend ist offline!</strong>
-                    <p>Bitte starte das Backend mit <code>python backend.py</code></p>
+            <!-- Full-screen states -->
+            <CdnProgressView
+                v-if="appStatus.state === 'loading' || appStatus.state === 'offline-no-cache'"
+                @cdn-ready="onCdnReady"
+            />
+            <template v-else-if="appStatus.state === 'waiting-for-lol'">
+                <LolWaitingView @lol-connected="onLolConnected" />
+                <!-- Keep RouterView in DOM so draft state is preserved -->
+                <div style="display: none;">
+                    <RouterView />
                 </div>
-            </div>
-            
-            <RouterView />
+            </template>
+            <!-- Normal content -->
+            <template v-else>
+                <RouterView />
+            </template>
         </main>
-        
+
         <footer class="app-footer">
+            <StalenessIndicator
+                v-if="appStatus.staleSeverity !== 'none'"
+                :severity="appStatus.staleSeverity"
+                :lastFetchDate="appStatus.cacheStatus.newest_fetch_iso"
+            />
             <span :class="['status-badge', backendStatus]">
                 <span class="status-dot"></span>
-                Backend: {{ 
-                    backendStatus === 'checking' ? 'Prüfe...' : 
-                    backendStatus === 'online' ? 'Online' : 'Offline' 
+                Backend: {{
+                    backendStatus === 'checking' ? 'Checking...' :
+                    backendStatus === 'online' ? 'Online' : 'Offline'
                 }}
             </span>
             <span :class="['status-badge', leagueClientStatus]">
                 <span class="status-dot"></span>
-                League Client: {{ 
-                    leagueClientStatus === 'online' ? 'Online' : 
-                    leagueClientStatus === 'waiting' ? 'Warte...' : 'Offline' 
+                League Client: {{
+                    leagueClientStatus === 'online' ? 'Online' :
+                    leagueClientStatus === 'waiting' ? 'Waiting...' : 'Offline'
                 }}
             </span>
         </footer>
@@ -98,7 +200,7 @@ onMounted(async () => {
 /* --- HEADER STYLES --- */
 .app-header {
     /* Viel weniger Padding für kompakten Look */
-    padding: 0.75rem 2rem; 
+    padding: 0.75rem 2rem;
     background: var(--bg-secondary);
     border-bottom: 1px solid var(--border-color);
     height: 64px; /* Fixierte Höhe verhindert Springen */
@@ -204,7 +306,7 @@ onMounted(async () => {
         align-items: center;
         gap: 0.75rem;
     }
-    
+
     .nav-divider {
         display: none;
     }
@@ -222,23 +324,8 @@ onMounted(async () => {
     max-width: 1400px; /* Passend zum Header */
     width: 100%;
     margin: 0 auto;
+    position: relative;
 }
-
-.backend-warning {
-    display: flex;
-    align-items: flex-start;
-    gap: 0.75rem;
-    padding: 1rem 1.25rem;
-    background: rgba(239, 68, 68, 0.1);
-    border: 1px solid var(--error);
-    border-radius: var(--radius-md);
-    margin-bottom: 1.5rem;
-}
-
-.warning-icon { font-size: 1.5rem; }
-.warning-text strong { color: var(--error); }
-.warning-text p { margin: 0.25rem 0 0 0; font-size: 0.875rem; color: var(--text-secondary); }
-.warning-text code { background: var(--bg-tertiary); padding: 0.125rem 0.375rem; border-radius: var(--radius-sm); font-size: 0.8rem; }
 
 .app-footer {
     padding: 0.5rem 2rem;
