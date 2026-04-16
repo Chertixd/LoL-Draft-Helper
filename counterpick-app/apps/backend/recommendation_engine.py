@@ -9,8 +9,12 @@ Komplette Überarbeitung für Season 16:
 import math
 import json
 from typing import Dict, List, Optional, Any
-from lolalytics_api.supabase_client import get_supabase_client
-from lolalytics_api.supabase_repo import _resolve_champion, _champion_map, _get_latest_patch
+from lolalytics_api.json_repo import (
+    _resolve_champion,
+    _champion_map,
+    _get_latest_patch,
+    _table,
+)
 
 # Config Import
 from recommendation_config import (
@@ -142,8 +146,6 @@ def get_recommendations(
         print(f"[RECOMMENDATIONS] myTeam Details: {my_team}")
         print(f"[RECOMMENDATIONS] enemyTeam Details: {enemy_team}")
         
-        supabase = get_supabase_client()
-        
         # 1. SETUP & MAPPING
         champion_maps = _champion_map()
         key_to_name = champion_maps["key_to_name"]
@@ -164,8 +166,7 @@ def get_recommendations(
         my_db_roles = db_role_variants.get(my_role, [my_role])
 
         if not patch:
-            latest_res = supabase.table('champion_stats').select('patch').order('patch', desc=True).limit(1).execute()
-            patch = latest_res.data[0]['patch'] if latest_res.data else _get_latest_patch()
+            patch = _get_latest_patch()
         
         # Normalisiere Patch-Format (z.B. "16.1.1" -> "16.1")
         patch = normalize_patch(patch)
@@ -231,14 +232,12 @@ def get_recommendations(
         weights = base_weights
 
         # 2. KANDIDATEN LADEN (Inklusive stats_by_time!)
-        candidates_res = supabase.table('champion_stats') \
-            .select('*, stats_by_time') \
-            .eq('patch', patch) \
-            .in_('role', my_db_roles) \
-            .gt('games', 50) \
-            .execute()
-        
-        candidates = candidates_res.data or []
+        candidates = [
+            row for row in _table('champion_stats')
+            if row.get('patch') == patch
+            and row.get('role') in my_db_roles
+            and (row.get('games') or 0) > 50
+        ]
         print(f"[RECOMMENDATIONS] Kandidaten aus DB geladen: {len(candidates)} für Rollen {my_db_roles}")
         if not candidates:
             print(f"[RECOMMENDATIONS] Keine Kandidaten gefunden für Rolle {my_role}, patch {patch}")
@@ -265,25 +264,27 @@ def get_recommendations(
         # 3. STATS LADEN
         matchups = []
         if enemy_query_ids:
-            m_res = supabase.table('matchups') \
-                .select('*') \
-                .eq('patch', patch) \
-                .in_('role', my_db_roles) \
-                .in_('champion_key', cand_ids) \
-                .in_('opponent_key', enemy_query_ids) \
-                .execute()
-            matchups = m_res.data or []
+            cand_ids_set = set(cand_ids)
+            enemy_ids_set = set(enemy_query_ids)
+            matchups = [
+                row for row in _table('matchups', patch=patch)
+                if row.get('patch') == patch
+                and row.get('role') in my_db_roles
+                and row.get('champion_key') in cand_ids_set
+                and row.get('opponent_key') in enemy_ids_set
+            ]
 
         synergies = []
         if ally_query_ids:
-            s_res = supabase.table('synergies') \
-                .select('*') \
-                .eq('patch', patch) \
-                .in_('role', my_db_roles) \
-                .in_('champion_key', cand_ids) \
-                .in_('mate_key', ally_query_ids) \
-                .execute()
-            synergies = s_res.data or []
+            cand_ids_set = set(cand_ids)
+            ally_ids_set = set(ally_query_ids)
+            synergies = [
+                row for row in _table('synergies', patch=patch)
+                if row.get('patch') == patch
+                and row.get('role') in my_db_roles
+                and row.get('champion_key') in cand_ids_set
+                and row.get('mate_key') in ally_ids_set
+            ]
 
         # Base-Stats der Teammates laden (für Synergy-Delta-Berechnung)
         teammate_base_stats = {}
@@ -298,17 +299,17 @@ def get_recommendations(
                 mate_db_roles = db_role_variants.get(mate_role, [mate_role])
                 
                 print(f"[SYNERGY DEBUG] Lade Base-Stats für Teammate: ID={mate_id}, Role={mate_role}, DB-Roles={mate_db_roles}")
-                mate_stats_res = supabase.table('champion_stats') \
-                    .select('*') \
-                    .eq('patch', patch) \
-                    .eq('champion_key', str(mate_id)) \
-                    .in_('role', mate_db_roles) \
-                    .gt('games', 50) \
-                    .execute()
-                
-                if mate_stats_res.data:
+                mate_stats_data = [
+                    row for row in _table('champion_stats')
+                    if row.get('patch') == patch
+                    and row.get('champion_key') == str(mate_id)
+                    and row.get('role') in mate_db_roles
+                    and (row.get('games') or 0) > 50
+                ]
+
+                if mate_stats_data:
                     # Nehme den ersten Match (sollte nur einer sein pro Champion+Rolle)
-                    mate_stat = mate_stats_res.data[0]
+                    mate_stat = mate_stats_data[0]
                     teammate_base_stats[mate_id] = {
                         'wins': mate_stat.get('wins', 0),
                         'games': mate_stat.get('games', 0)
@@ -331,11 +332,15 @@ def get_recommendations(
         
         if my_jungler:
             # Stats für Jungler holen um Pacing zu checken
-            j_res = supabase.table('champion_stats').select('stats_by_time') \
-                .eq('champion_key', str(my_jungler['id'])).eq('patch', patch).eq('role', 'jungle').execute()
-            
-            if j_res.data:
-                my_jungler_pacing = analyze_pacing(j_res.data[0].get('stats_by_time'))
+            j_rows = [
+                row for row in _table('champion_stats')
+                if row.get('champion_key') == str(my_jungler['id'])
+                and row.get('patch') == patch
+                and row.get('role') == 'jungle'
+            ]
+
+            if j_rows:
+                my_jungler_pacing = analyze_pacing(j_rows[0].get('stats_by_time'))
                 print(f"[PACING] My Jungler is Early: {my_jungler_pacing['is_early']}, Scaling: {my_jungler_pacing['is_scaling']}")
 
         # 4. SCORE BERECHNUNG
@@ -545,36 +550,34 @@ def get_recommendations(
         all_picked_ids = list(picked_ids)
         if all_picked_ids:
             # Lade Stats für gepickte Champions (alle Rollen)
-            picked_stats_res = supabase.table('champion_stats') \
-                .select('*') \
-                .eq('patch', patch) \
-                .in_('champion_key', [str(pid) for pid in all_picked_ids]) \
-                .execute()
-            
-            picked_stats = picked_stats_res.data or []
-            
+            picked_key_set = {str(pid) for pid in all_picked_ids}
+            picked_stats = [
+                row for row in _table('champion_stats')
+                if row.get('patch') == patch
+                and row.get('champion_key') in picked_key_set
+            ]
+
             # Lade Matchups für gepickte Champions gegen andere gepickte Champions
             picked_matchups = []
             if len(all_picked_ids) > 1:
-                picked_matchups_res = supabase.table('matchups') \
-                    .select('*') \
-                    .eq('patch', patch) \
-                    .in_('champion_key', [str(pid) for pid in all_picked_ids]) \
-                    .in_('opponent_key', [str(pid) for pid in all_picked_ids]) \
-                    .execute()
-                picked_matchups = picked_matchups_res.data or []
-            
+                picked_matchups = [
+                    row for row in _table('matchups', patch=patch)
+                    if row.get('patch') == patch
+                    and row.get('champion_key') in picked_key_set
+                    and row.get('opponent_key') in picked_key_set
+                ]
+
             # Lade Synergien für gepickte Champions im eigenen Team
             picked_synergies = []
             my_team_pick_ids = [str(m['id']) for m in my_team_ids]
             if len(my_team_ids) > 1:
-                picked_synergies_res = supabase.table('synergies') \
-                    .select('*') \
-                    .eq('patch', patch) \
-                    .in_('champion_key', my_team_pick_ids) \
-                    .in_('mate_key', my_team_pick_ids) \
-                    .execute()
-                picked_synergies = picked_synergies_res.data or []
+                my_team_key_set = set(my_team_pick_ids)
+                picked_synergies = [
+                    row for row in _table('synergies', patch=patch)
+                    if row.get('patch') == patch
+                    and row.get('champion_key') in my_team_key_set
+                    and row.get('mate_key') in my_team_key_set
+                ]
             
             # Berechne Scores für jeden gepickten Champion
             for team_member in my_team_ids + enemy_team_ids:

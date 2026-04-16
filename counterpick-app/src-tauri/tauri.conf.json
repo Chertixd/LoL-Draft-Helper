@@ -1,6 +1,6 @@
 {
   "productName": "LoL Draft Analyzer",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "identifier": "dev.till.lol-draft-analyzer",
   "build": {
     "beforeDevCommand": "pnpm --filter @counterpick/frontend dev",

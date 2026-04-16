@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.0.4] - 2026-04-16
+
+### Fixed
+- **Critical:** `/api/recommendations` was completely broken in installed production builds. The recommendation engine still imported `supabase_client` and made 11 direct Supabase queries per request, but `supabase-py` was excluded from the PyInstaller bundle in Phase 2. Every draft recommendation would have raised `ImportError: No module named 'supabase'` in the installed app. This was invisible in v1.0.0-1.0.3 because earlier bugs prevented the app from ever reaching a champion-select flow. Refactored `recommendation_engine.py` to read from the in-memory `json_repo` cache (the same source everything else already uses since Plan 02-04)
+
+### Performance
+- Recommendation latency reduced 4-5x: ~4 s → ~800 ms. Root cause was the 11 supabase.co network round-trips per request; all now served from the preloaded in-memory CDN cache. Further optimisation (hash-map indexes over matchup rows, target ~100 ms) is tracked for v1.1
+
 ## [1.0.3] - 2026-04-16
 
 ### Fixed
