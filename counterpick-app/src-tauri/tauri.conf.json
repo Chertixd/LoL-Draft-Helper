@@ -1,0 +1,28 @@
+{
+  "productName": "LoL Draft Analyzer",
+  "version": "0.1.0-dev",
+  "identifier": "dev.till.lol-draft-analyzer",
+  "build": {
+    "beforeDevCommand": "pnpm --filter @counterpick/frontend dev",
+    "devUrl": "http://localhost:3000",
+    "beforeBuildCommand": "pnpm --filter @counterpick/frontend build",
+    "frontendDist": "../apps/frontend/dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "LoL Draft Analyzer",
+        "width": 1280,
+        "height": 800,
+        "resizable": true,
+        "visible": false
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": false
+  }
+}
