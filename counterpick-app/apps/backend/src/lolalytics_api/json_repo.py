@@ -394,6 +394,12 @@ def warm_cache() -> None:
             results[t] = fut.result()  # propagates CDNError on failure
     with _data_lock:
         _data.update(results)
+    logger.info(
+        "[json_repo] warm_cache complete; %d tables loaded (per-patch "
+        "tables %s fetched lazily)",
+        len(results),
+        sorted(PER_PATCH_TABLES),
+    )
 
 
 def preload_latest_patch_shards() -> None:
@@ -431,12 +437,6 @@ def preload_latest_patch_shards() -> None:
                     "[json_repo] preload failed for %s_%s: %s",
                     tbl, latest, exc
                 )
-    logger.info(
-        "[json_repo] warm_cache complete; %d tables loaded (per-patch "
-        "tables %s fetched lazily)",
-        len(results),
-        sorted(PER_PATCH_TABLES),
-    )
 
 
 def stale_status() -> Dict[str, bool]:

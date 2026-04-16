@@ -4,7 +4,7 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [1.0.2] - 2026-04-16
+## [1.0.3] - 2026-04-16
 
 ### Fixed
 - League Client was not detected in the Lobby phase: `is_league_client_running()` checked for a game-session (HTTP 200 on `/lol-gameflow/v1/session`) but returned 404 in the lobby. Switched to `/lol-gameflow/v1/gameflow-phase` which returns 200 whenever the client is reachable, regardless of game state
