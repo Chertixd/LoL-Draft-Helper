@@ -283,6 +283,21 @@ def api_status():
     return jsonify(health)
 
 
+@app.route('/api/draft/active', methods=['GET'])
+def api_draft_active():
+    """
+    Returns whether a champion-select session is currently in progress.
+    Used by the Tauri updater to defer installAndRelaunch() mid-draft (UPD-04, D-12).
+    """
+    active = _last_draft_state is not None
+    phase = "UNKNOWN"
+    if _last_draft_state and isinstance(_last_draft_state, dict):
+        session = _last_draft_state.get('session')
+        if isinstance(session, dict):
+            phase = session.get('timer', {}).get('phase', 'UNKNOWN')
+    return jsonify({"active": active, "phase": phase})
+
+
 @app.route('/api/primary-roles', methods=['GET'])
 def get_primary_roles():
     """
