@@ -190,6 +190,38 @@ pub fn spawn_sidecar(
 }
 
 // ---------------------------------------------------------------------------
+// Raw spawn for integration tests (TAURI-10)
+// ---------------------------------------------------------------------------
+
+/// Spawn the sidecar process inside a Win32 Job Object, accepting raw
+/// `&[&str]` args so integration tests can pass an arbitrary command line
+/// (e.g. `python backend.py --port ...`) without constructing `Vec<String>`.
+///
+/// This is the test-facing counterpart of [`spawn_sidecar`] which takes
+/// `&[String]` args from the Tauri host's arg builder.
+#[cfg(windows)]
+pub fn spawn_sidecar_raw(
+    exe: &std::path::Path,
+    args: &[&str],
+    port: u16,
+    _ready_file: &std::path::Path,
+) -> Result<SidecarHandle> {
+    let owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
+    spawn_sidecar(exe, &owned, port)
+}
+
+/// Stub for non-Windows platforms.
+#[cfg(not(windows))]
+pub fn spawn_sidecar_raw(
+    _exe: &std::path::Path,
+    _args: &[&str],
+    _port: u16,
+    _ready_file: &std::path::Path,
+) -> Result<SidecarHandle> {
+    anyhow::bail!("sidecar spawn is only supported on Windows")
+}
+
+// ---------------------------------------------------------------------------
 // Ready-file poll
 // ---------------------------------------------------------------------------
 

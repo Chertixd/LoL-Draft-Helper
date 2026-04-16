@@ -1,5 +1,5 @@
 mod commands;
-mod sidecar;
+pub mod sidecar;
 
 use std::sync::Mutex;
 use tauri::Manager;
