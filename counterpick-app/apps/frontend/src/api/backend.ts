@@ -91,6 +91,19 @@ export async function checkBackendHealth(): Promise<{ status: string }> {
 }
 
 /**
+ * App status -- CDN cache progress and staleness info
+ * Used by CdnProgressView during first-run (UX-01)
+ */
+export async function getAppStatus(): Promise<{
+    phase: string
+    done: number
+    total: number
+    cached: Record<string, { fetched_at?: string; age_hours?: number }> | null
+}> {
+    return fetchApi('/status', undefined, 1, 300)
+}
+
+/**
  * Champion-Liste abrufen
  */
 export async function getChampionsList(): Promise<{
