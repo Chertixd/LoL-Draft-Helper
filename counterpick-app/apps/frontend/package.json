@@ -1,6 +1,6 @@
 {
     "name": "@counterpick/frontend",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "description": "Vue 3 Frontend für Counterpick App",
     "type": "module",
     "scripts": {

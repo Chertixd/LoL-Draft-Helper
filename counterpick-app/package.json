@@ -1,6 +1,6 @@
 {
     "name": "counterpick-app",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "description": "LoL Champion Counter & Draft Analyzer - Desktop App",
     "private": true,
     "scripts": {
