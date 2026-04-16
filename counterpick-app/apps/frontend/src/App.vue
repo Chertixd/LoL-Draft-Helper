@@ -86,10 +86,9 @@ onMounted(async () => {
 
             // Check status endpoint for CDN warm-up phase
             try {
+                const { getBackendURL } = await import('@/api/client');
                 const statusResp = await fetch(
-                    ((await import('@/api/client')).getBackendURL
-                        ? await (await import('@/api/client')).getBackendURL()
-                        : '') + '/api/status'
+                    (await getBackendURL()) + '/api/status'
                 );
                 if (statusResp.ok) {
                     const statusData = await statusResp.json();
