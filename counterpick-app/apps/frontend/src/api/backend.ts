@@ -43,11 +43,14 @@ async function fetchApi<T>(
     retryDelay = 500
 ): Promise<T> {
     let lastError: Error | null = null;
-    
-    const apiBase = await getApiBaseURL()
 
     for (let attempt = 0; attempt <= retries; attempt++) {
         try {
+            // Resolve API base inside the retry loop so a mid-startup
+            // invoke('get_backend_port') failure (e.g. IPC not yet ready)
+            // also gets retried instead of throwing uncaught above the loop.
+            const apiBase = await getApiBaseURL()
+
             const response = await fetch(`${apiBase}${endpoint}`, {
                 headers: {
                     'Content-Type': 'application/json',
@@ -70,24 +73,36 @@ async function fetchApi<T>(
             return response.json();
         } catch (error) {
             lastError = error instanceof Error ? error : new Error(String(error));
-            
-            // Bei Netzwerkfehlern: Retry
+
+            // Bei Netzwerkfehlern (TypeError: Failed to fetch, ECONNREFUSED,
+            // IPC nicht ready): Retry. The sidecar warm_cache phase can take
+            // several seconds after ready-file is written, so early health
+            // checks see ECONNREFUSED while Flask is still binding.
             if (attempt < retries) {
                 console.warn(`[API] Fehler bei ${endpoint}, Retry ${attempt + 1}/${retries}:`, lastError.message);
+                // Invalidate cached api base URL so we re-resolve via Tauri IPC
+                // on next attempt (handles the case where the first invoke
+                // returned a port that was never actually bound).
+                resetApiBase();
                 await delay(retryDelay * (attempt + 1));
                 continue;
             }
         }
     }
-    
+
     throw lastError || new Error('Unbekannter Fehler');
 }
 
 /**
  * Health Check - Prüft Backend-Status
+ *
+ * Aggressive retries (10 attempts, exponential backoff 250ms → ~2.5s)
+ * because this is the first backend call at app startup and the sidecar
+ * may still be completing its CDN warm_cache phase when App.vue mounts.
+ * Cumulative worst-case: ~15 seconds before giving up.
  */
 export async function checkBackendHealth(): Promise<{ status: string }> {
-    return fetchApi('/health', undefined, 1, 300);
+    return fetchApi('/health', undefined, 10, 250);
 }
 
 /**
@@ -131,7 +146,10 @@ export async function getAvailablePatches(): Promise<{
     patches?: string[];
     error?: string;
 }> {
-    return fetchApi('/patches');
+    // Also called at app startup; give it longer retries so the sidecar
+    // warm_cache completion doesn't race the first patch list request
+    // (which would leave the dropdown stuck on the hardcoded fallback).
+    return fetchApi('/patches', undefined, 8, 250);
 }
 
 /**
