@@ -71,7 +71,7 @@ onMounted(async () => {
     try {
         if (!championStore.championsLoaded) await championStore.loadChampionData();
         await draftStore.checkLeagueClientStatus();
-        draftStore.connectWebSocket();
+        await draftStore.connectWebSocket();
         
         if (draftStore.myRoleChampion) {
             analysisChampion.value = draftStore.myRoleChampion;

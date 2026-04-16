@@ -4,12 +4,13 @@
 import { defineStore } from 'pinia';
 import { ref, computed, watch } from 'vue';
 import { io, Socket } from 'socket.io-client';
-import { 
-    getLeagueClientStatus, 
+import {
+    getLeagueClientStatus,
     getRecommendations,
     setRoleOverride,
     getBatchRoleProbabilities
 } from '@/api/backend';
+import { getBackendURL } from '@/api/client';
 import { useSettingsStore } from '@/stores/settings';
 import type { 
     DraftPick, 
@@ -227,10 +228,15 @@ export const useDraftStore = defineStore('draft', () => {
         }
     }
 
-    function connectWebSocket() {
+    async function connectWebSocket() {
         if (socket?.connected) return;
 
-        socket = io('http://localhost:5000', {
+        const baseURL = await getBackendURL()
+        // In browser dev mode, baseURL is '' — fall back to localhost:5000
+        // for Socket.IO which needs an absolute URL (not the Vite proxy)
+        const socketURL = baseURL || 'http://localhost:5000'
+
+        socket = io(socketURL, {
             transports: ['websocket', 'polling'],
             reconnection: true,
             reconnectionDelay: 1000,

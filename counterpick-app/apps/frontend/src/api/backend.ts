@@ -7,8 +7,24 @@ import type {
     RecommendationRequest,
     RecommendationResponse
 } from '@counterpick/core';
+import { getBackendURL } from '@/api/client';
 
-const API_BASE_URL = '/api';
+let _apiBaseURL: string | null = null
+
+async function getApiBaseURL(): Promise<string> {
+    if (_apiBaseURL === null) {
+        const base = await getBackendURL()
+        _apiBaseURL = base + '/api'
+    }
+    return _apiBaseURL
+}
+
+/**
+ * Reset cached API base when backend URL changes (e.g. backend restart).
+ */
+export function resetApiBase(): void {
+    _apiBaseURL = null
+}
 
 /**
  * Wartet für eine bestimmte Zeit
@@ -28,9 +44,11 @@ async function fetchApi<T>(
 ): Promise<T> {
     let lastError: Error | null = null;
     
+    const apiBase = await getApiBaseURL()
+
     for (let attempt = 0; attempt <= retries; attempt++) {
         try {
-            const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+            const response = await fetch(`${apiBase}${endpoint}`, {
                 headers: {
                     'Content-Type': 'application/json',
                     ...options?.headers
