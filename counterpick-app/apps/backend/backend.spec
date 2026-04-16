@@ -75,6 +75,17 @@ a = Analysis(
         'storage3',
         'supabase_functions',
         'supabase_auth',
+        # Our own supabase-facing modules: they stay in the source tree for
+        # the live-credential contract tests (Phase 2 D-29) but are NOT on the
+        # runtime import path (backend.py imports from lolalytics_api.json_repo
+        # since Plan 02-04). Without these excludes PyInstaller picks them up
+        # anyway (they are siblings of json_repo in the same package) and the
+        # strings "supabase_client" and "supabase_repo" leak into the .exe,
+        # tripping the CI AV-guard grep even though the package-level excludes
+        # above already removed the actual supabase-py dependency.
+        'lolalytics_api.supabase_client',
+        'lolalytics_api.supabase_repo',
+        'lolalytics_api.config',
         # Locked async_mode='threading' — exclude the alternatives so PyInstaller
         # doesn't waste cycles trying to bundle them.
         'eventlet',
