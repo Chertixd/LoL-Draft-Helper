@@ -1,63 +1,64 @@
 # Local Development Setup
 
 This document explains how to run LoL Draft Analyzer locally for frontend or
-backend changes without a full Tauri build cycle.
+backend changes.
 
-## One-time setup
+**Setup A (pure browser dev) is the recommended path** — it works on exFAT
+drives and gives you instant Vue/TypeScript hot-reload. Tauri-specific work
+(Setup B/C) requires moving the repo to an NTFS drive because Tauri workspaces
+need symlinks which exFAT does not support.
 
-### Prerequisites
+## Prerequisites
 
 - **Windows 10 / 11**
 - **Python 3.12** on PATH
-- **Node.js 20 LTS** on PATH
-- **pnpm 9.2 or newer** (`npm install -g pnpm`)
-- **NTFS volume** for the project (do NOT use exFAT — pnpm workspaces need
-  symlinks which exFAT cannot create; a 5 min move to `C:\` solves this
-  permanently)
+- **Node.js 20 LTS** on PATH (includes `npm`)
+- **LoL Client** installed (for champion-select detection testing)
 
-### First-time install
+## Setup A — Pure browser dev (works on exFAT)
 
-Clone the repo to an NTFS volume (e.g. `C:\Users\till-\repos\LoL-Draft-Helper`):
+Hot-reload for `.vue` and `.ts` files. No Tauri required. Fastest feedback loop.
 
-```powershell
-git clone https://github.com/Chertixd/LoL-Draft-Helper.git C:\Users\till-\repos\LoL-Draft-Helper
-cd C:\Users\till-\repos\LoL-Draft-Helper
-```
+### One-time setup (already done on your machine)
 
-Copy `.env` files (they are gitignored so they don't travel with the clone):
+Python backend deps:
 
 ```powershell
-copy "F:\Dokumente\Archiv\Riot Api\counterpick-app\apps\backend\.env" ".\counterpick-app\apps\backend\.env"
-copy "F:\Dokumente\Archiv\Riot Api\supabase-dataset-updater\.env" ".\supabase-dataset-updater\.env"
-```
-
-Install Python backend deps:
-
-```powershell
-cd counterpick-app\apps\backend
+cd "F:\Dokumente\Archiv\Riot Api\counterpick-app\apps\backend"
 pip install -r requirements.txt
 pip install -e .
-cd ..\..
 ```
 
-Install frontend deps:
+Frontend deps via `npm` (NOT pnpm — pnpm workspaces need symlinks which
+exFAT cannot create):
 
 ```powershell
-pnpm install
+cd "F:\Dokumente\Archiv\Riot Api\counterpick-app\apps\frontend"
+npm install
 ```
 
-## Setup A — Pure browser dev (recommended for frontend work)
+**Local-only overrides already in place** (see `.git/info/exclude` — never
+committed):
 
-Hot-reload for `.vue` and `.ts` files. No Tauri. Fastest feedback loop.
+- `apps/frontend/.npmrc` with `workspaces=false` — tells npm to ignore the
+  parent `pnpm-workspace.yaml`
+- `apps/frontend/package.json` — has the `@counterpick/core: workspace:*`
+  dep stripped (npm doesn't understand `workspace:*`, and Vite resolves
+  `@counterpick/core` via `vite.config.ts` alias anyway)
+- `apps/frontend/package-lock.json` — npm lockfile, never pushed
+
+These three files are locally modified / untracked but hidden from Git via
+`.git/info/exclude` + `git update-index --assume-unchanged`. You never need
+to think about them.
 
 ### Daily startup
 
-Open **two PowerShell windows** at the repo root.
+Open **two PowerShell windows**.
 
-**Terminal 1 — Backend:**
+**Terminal 1 — Python backend:**
 
 ```powershell
-cd counterpick-app\apps\backend
+cd "F:\Dokumente\Archiv\Riot Api\counterpick-app\apps\backend"
 python backend.py --port 5000
 ```
 
@@ -70,118 +71,153 @@ Wait until you see:
 **Terminal 2 — Vite dev server:**
 
 ```powershell
-cd counterpick-app\apps\frontend
-pnpm dev
+cd "F:\Dokumente\Archiv\Riot Api\counterpick-app\apps\frontend"
+npm run dev
 ```
 
-This prints:
+You'll see:
 ```
-  VITE v5.x.x  ready in xxx ms
-  ➜  Local:   http://localhost:3000/
+VITE v5.4.21  ready in xxx ms
+➜  Local:   http://localhost:3000/
 ```
 
 ### Use
 
-Open http://localhost:3000 in your browser.
+Open **http://localhost:3000** in your browser (Chrome / Edge / Firefox).
 
-- Vite proxies `/api/*` calls to `http://localhost:5000` automatically
 - Any edit in `apps/frontend/src/**/*.{vue,ts}` → instant HMR update
-- Python backend changes → restart Terminal 1 manually (no hot-reload for Python)
-- Browser DevTools (F12) work normally — full console, network, Vue devtools
+- Python backend changes → restart Terminal 1 (Ctrl+C, re-run the command)
+- Browser DevTools (F12) work normally: console, network tab, Vue devtools
+  extension
+- Vite proxies `/api/*` calls to `http://localhost:5000` automatically
+
+### Stop
+
+Ctrl+C in both terminals, or close the PowerShell windows.
 
 ### What DOES work in this mode
 
 - Vue component editing with live reload
-- Pinia store debugging
+- Pinia store debugging via Vue devtools
 - API request/response inspection via browser network tab
-- Backend route testing with real Supabase data (not CDN) because the
-  `python backend.py` invocation loads `.env` directly
-- Recommendation engine, champion lookup, all HTTP routes
+- Full backend routes — recommendation engine, champion lookup, matchups,
+  synergies, LCU detection
+- Supabase connection direct (not CDN) because `python backend.py` loads
+  `.env` with `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY`
 
 ### What does NOT work in this mode
 
-- Tauri IPC (`window.__TAURI__` is undefined in a plain browser)
+- Tauri IPC (`window.__TAURI__` is undefined in plain browser)
   → `getBackendURL()` returns `''` and uses the Vite proxy instead
   → `get_backend_port`, `restart_backend`, `backend-disconnected` events
-    are all stubbed
-- Tauri updater (doesn't exist in browser)
-- Windows Job Object sidecar lifecycle (backend runs standalone)
+    are stubbed / no-op
+- Tauri auto-updater
+- Windows Job Object sidecar lifecycle (Python runs as a standalone process)
 - Actual `.msi` install behavior
-- LCU auth / champion select detection *only works while LoL is running on
-  your machine* — the backend reads the LCU lockfile regardless of whether
-  we're in Tauri or browser mode
 
-### Stop
+### Example: edit a Vue component
 
-Ctrl+C in both terminals, or just close the PowerShell windows.
+1. Both terminals running (backend + vite)
+2. Browser on http://localhost:3000
+3. Edit `apps/frontend/src/App.vue` — save
+4. Browser tab reloads automatically (HMR), state preserved where possible
+5. Open DevTools → Console to see any errors
 
-## Setup B — Tauri dev (for sidecar lifecycle / IPC work)
+## Setup B / C — Tauri dev + local MSI build
 
-Use this when you need `window.__TAURI__`, the Rust host, or the updater.
-
-```powershell
-cd counterpick-app
-pnpm tauri dev
-```
-
-This starts Vite internally + spawns a native Python backend + opens the Tauri
-webview. HMR for the Vue code still works. Python backend changes require
-Ctrl+C and restart.
-
-Requires Rust installed (`rustup-init`) and the MSVC C++ build tools
-(installed with Visual Studio or standalone Build Tools).
-
-## Setup C — Local MSI/NSIS build
-
-Only for testing the actual install flow. Takes 10-15 min.
+Requires moving the repo to an NTFS drive. If you later decide to test
+Tauri-specific code locally:
 
 ```powershell
+git clone https://github.com/Chertixd/LoL-Draft-Helper.git C:\Users\till-\repos\LoL-Draft-Helper
+cd C:\Users\till-\repos\LoL-Draft-Helper
+copy "F:\Dokumente\Archiv\Riot Api\counterpick-app\apps\backend\.env" ".\counterpick-app\apps\backend\.env"
+copy "F:\Dokumente\Archiv\Riot Api\supabase-dataset-updater\.env" ".\supabase-dataset-updater\.env"
 cd counterpick-app
-pnpm tauri build
+pnpm install          # works on NTFS
+pnpm tauri dev        # Setup B: full Tauri + HMR
+# or
+pnpm tauri build      # Setup C: produces MSI + NSIS in src-tauri/target/release/bundle/
 ```
 
-Output:
-- `src-tauri\target\release\bundle\msi\*.msi`
-- `src-tauri\target\release\bundle\nsis\*-setup.exe`
+Also needs Rust (`rustup-init`) + MSVC C++ build tools.
 
-The CI pipeline does this on every `v*` tag push — you rarely need local
-builds.
+Until you do that move, Tauri-specific bugs (updater, sidecar lifecycle, IPC)
+can only be tested by tagging a release and letting CI build — slower but
+works.
 
 ## Troubleshooting
 
-### `pnpm install` crashes with `EISDIR` or symlink errors
+### Vite shows `localhost:3000 refused`
 
-You are on an exFAT volume. Move the repo to NTFS (usually `C:`). See the
-first section of this file.
-
-### Vite shows `localhost:3000 refused` but backend is running
-
-Check `vite.config.ts` — the dev server port is 3000, and the proxy target
-is `http://localhost:5000`. Your `python backend.py --port 5000` must match.
+Check Terminal 2 — is `npm run dev` actually running? Look for `VITE v5.x.x ready` line.
 
 ### Backend "Address already in use"
 
-Another Python process is still holding port 5000. Either kill it:
+Kill stray Python processes:
 
 ```powershell
 Get-Process python -ErrorAction SilentlyContinue | Stop-Process -Force
 ```
 
-Or use a different port: `python backend.py --port 5001` and adjust
-`vite.config.ts` proxy target.
+Or use a different port: `python backend.py --port 5001` — then edit
+`apps/frontend/vite.config.ts` `proxy` target to match.
+
+### `npm install` errors with `EISDIR` or `workspace:*`
+
+Something disturbed the local setup. Rebuild it:
+
+```powershell
+cd "F:\Dokumente\Archiv\Riot Api\counterpick-app\apps\frontend"
+Remove-Item -Recurse -Force node_modules, package-lock.json -ErrorAction SilentlyContinue
+# Make sure .npmrc exists with: workspaces=false
+npm install
+```
+
+If that fails because `package.json` has been re-synced to pin
+`@counterpick/core: workspace:*`:
+
+```powershell
+# Strip the line temporarily
+node -e "const fs=require('fs'); const p=JSON.parse(fs.readFileSync('package.json')); delete p.dependencies['@counterpick/core']; fs.writeFileSync('package.json', JSON.stringify(p,null,4));"
+npm install
+```
+
+Then re-hide it from git:
+
+```powershell
+git update-index --assume-unchanged package.json
+```
 
 ### Champion select not detected while LoL is running
 
-The backend uses `Get-CimInstance Win32_Process` to find the
-`LeagueClientUx.exe` process and parse `--app-port` / `--remoting-auth-token`
-from its command line. Check it's really there:
+The backend finds LoL by running `Get-CimInstance Win32_Process` to read
+the `LeagueClientUx.exe` command line. Verify directly:
 
 ```powershell
 Get-CimInstance Win32_Process -Filter "name = 'LeagueClientUx.exe'" | Select-Object -ExpandProperty CommandLine
 ```
 
-If it's empty but LoL is running, PowerShell execution policy may be
-blocking the query. Check with `Get-ExecutionPolicy`.
+If that returns empty while LoL is running, PowerShell execution policy may
+be blocking WMI queries. Check with `Get-ExecutionPolicy`; should be
+`RemoteSigned` or more permissive.
+
+### Browser shows old code after edit
+
+Hard-refresh: Ctrl+Shift+R. If still stale, check that Vite actually picked
+up the change (Terminal 2 prints the updated file). If HMR truly broke,
+restart `npm run dev`.
+
+### Backend crashes immediately after start
+
+Read the traceback in Terminal 1. Most common: missing `.env` (Supabase vars
+not set), or a Python dep wasn't installed. Re-run:
+
+```powershell
+cd "F:\Dokumente\Archiv\Riot Api\counterpick-app\apps\backend"
+pip install -r requirements.txt
+pip install -e .
+```
 
 ## Project structure
 
@@ -192,7 +228,7 @@ counterpick-app/
 │   └── backend/        Flask + Flask-SocketIO — python backend.py
 ├── packages/
 │   └── core/           Shared TypeScript types (consumed via @counterpick/core alias)
-└── src-tauri/          Rust + Tauri v2 — Setup B/C only
+└── src-tauri/          Rust + Tauri v2 — Setup B/C only (needs NTFS)
 
 supabase-dataset-updater/
 └── scripts/            Python ETL + CDN JSON exporter (runs in CI)
@@ -202,3 +238,16 @@ supabase-dataset-updater/
 ├── release.yml         v* tag push — builds MSI + NSIS + publishes latest.json
 └── update-dataset.yml  Daily 12:00 UTC — Supabase ETL + CDN refresh
 ```
+
+## Workflow when you ship changes
+
+1. Make edits under `apps/frontend/` or `apps/backend/` (Setup A catches most)
+2. `git add <files>` + `git commit` — exclude list keeps the local-only
+   package.json / .npmrc / package-lock.json out automatically
+3. `git push origin master` — CI runs build-smoke
+4. When you have multiple changes ready for users: `git tag v1.0.X` +
+   `git push origin v1.0.X` — CI builds MSI/NSIS, publishes latest.json,
+   installed clients get the auto-update prompt
+
+For Tauri-only fixes (sidecar lifecycle, IPC commands, Rust code): move
+the repo to NTFS (Setup B/C) or test via tagged pre-release builds.
