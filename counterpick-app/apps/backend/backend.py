@@ -119,6 +119,9 @@ CACHE_DURATION = 86400  # 24 Stunden in Sekunden
 # Manuelle Rollen-Überschreibung (None = automatische Erkennung aktiv)
 MANUAL_ROLE_OVERRIDE = None
 
+# CDN warm-cache progress for /api/status endpoint (UX-01)
+_warm_cache_progress = {"phase": "idle", "done": 0, "total": 0}
+
 # Synergy Role Mapping: Welche Rolle ist der primäre Synergie-Partner?
 SYNERGY_ROLE_MAPPING = {
     'support': 'bottom',   # Support -> zeige ADCs
@@ -253,6 +256,31 @@ def health_check():
         'cached': _cached,
         'timestamp': datetime.now().isoformat()
     })
+
+
+@app.route('/api/status', methods=['GET'])
+def api_status():
+    """
+    Returns app status including CDN cache warm-up progress.
+
+    Used by the Tauri host / frontend to show first-run progress (UX-01).
+    During startup, ``_warm_cache_progress`` tracks the warm-cache phase.
+    After startup, it also surfaces per-table staleness from json_repo.
+    """
+    health = {
+        "phase": _warm_cache_progress.get("phase", "idle"),
+        "done": _warm_cache_progress.get("done", 0),
+        "total": _warm_cache_progress.get("total", 0),
+    }
+
+    # Add staleness info from json_repo (UX-03, UX-04)
+    try:
+        stale = _json_repo_stale_status()
+        health["cached"] = stale
+    except Exception:
+        health["cached"] = None
+
+    return jsonify(health)
 
 
 @app.route('/api/primary-roles', methods=['GET'])
@@ -2040,9 +2068,15 @@ def main() -> None:
     # aborts startup loudly (Tauri's probe will time out and Phase 3's UX
     # layer will replace this with a friendly error banner — first-run
     # offline UX is intentionally deferred per D-19 + N-05).
+    # Phase 3 UX-01: update _warm_cache_progress so /api/status can report
+    # first-run CDN download progress to the frontend.
+    global _warm_cache_progress
+    _warm_cache_progress = {"phase": "warming", "done": 0, "total": 9}
     try:
         _json_repo_warm_cache()
+        _warm_cache_progress = {"phase": "ready", "done": 9, "total": 9}
     except _json_repo_CDNError as exc:
+        _warm_cache_progress = {"phase": "error", "done": 0, "total": 9}
         log.error("[json_repo] warm_cache failed: %s", exc)
         # Fail loud — do NOT write ready-file. Tauri will time out the probe
         # and show the Phase 3 AV-troubleshooting dialog (TAURI-07).
@@ -2067,6 +2101,7 @@ def main() -> None:
     log.info("=" * 60)
     log.info("Verfügbare Endpunkte:")
     log.info("  GET  /api/health                    - Health Check")
+    log.info("  GET  /api/status                    - App Status + CDN Progress")
     log.info("  GET  /api/champions/list            - Champion-Liste")
     log.info("  GET  /api/primary-roles             - Primary Roles Mapping")
     log.info("  POST /api/recommendations           - Recommendation Engine")

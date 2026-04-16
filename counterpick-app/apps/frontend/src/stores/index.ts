@@ -5,4 +5,5 @@
 export { useChampionStore } from './champion';
 export { useSettingsStore } from './settings';
 export { useDraftStore } from './draft';
+export { useAppStatusStore } from './appStatus';
 
