@@ -1,0 +1,169 @@
+# .github/workflows/release.yml
+# BUILD-01..04: Tag-triggered release pipeline.
+# Produces signed .msi + NSIS -setup.exe, creates GitHub Release with SHA256
+# hashes, and publishes latest.json to the CDN repo's gh-pages branch.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  build-release:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      # === 1. Checkout ===
+      - uses: actions/checkout@v4
+
+      # === 2. Python 3.12 + sidecar build (per D-02) ===
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12.x"
+          cache: pip
+          cache-dependency-path: counterpick-app/apps/backend/requirements.txt
+
+      - name: Install runtime + PyInstaller
+        working-directory: counterpick-app/apps/backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller==6.19.0
+
+      # Editable install for lolalytics_api (required for import resolution)
+      - name: Install lolalytics_api (editable)
+        working-directory: counterpick-app/apps/backend
+        run: pip install -e .
+
+      - name: PyInstaller build
+        working-directory: counterpick-app/apps/backend
+        run: pyinstaller --clean --noconfirm backend.spec
+
+      # Copy sidecar to src-tauri/binaries/ (Tauri expects target-triple suffix)
+      - name: Stage sidecar binary
+        shell: bash
+        run: |
+          mkdir -p counterpick-app/src-tauri/binaries
+          cp counterpick-app/apps/backend/dist/backend-x86_64-pc-windows-msvc.exe \
+             counterpick-app/src-tauri/binaries/backend-x86_64-pc-windows-msvc.exe
+
+      # === 3. Node / pnpm + Tauri build ===
+      - uses: pnpm/action-setup@v4
+        with:
+          version: "9.2.0"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: pnpm
+          cache-dependency-path: counterpick-app/pnpm-lock.yaml
+
+      - name: Install JS deps
+        working-directory: counterpick-app
+        run: pnpm install
+
+      # CRITICAL: Use Tauri v2 env var names (NOT v1 names).
+      # TAURI_SIGNING_PRIVATE_KEY (NOT TAURI_PRIVATE_KEY)
+      # TAURI_SIGNING_PRIVATE_KEY_PASSWORD (NOT TAURI_KEY_PASSWORD)
+      # Using v1 names silently skips signing -- .sig files will not be generated.
+      - name: Tauri build
+        working-directory: counterpick-app
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: pnpm tauri build
+
+      # === 4. SHA256 hashes (PowerShell, per BUILD-03) ===
+      - name: Compute SHA256 hashes
+        id: hashes
+        shell: pwsh
+        working-directory: counterpick-app
+        run: |
+          $msi = Get-ChildItem "src-tauri/target/release/bundle/msi/*.msi" -Exclude "*.sig" | Select-Object -First 1
+          $nsis = Get-ChildItem "src-tauri/target/release/bundle/nsis/*-setup.exe" -Exclude "*.sig" | Select-Object -First 1
+          if (-not $msi) { throw "No MSI artifact found" }
+          if (-not $nsis) { throw "No NSIS artifact found" }
+          $msiHash = (Get-FileHash $msi -Algorithm SHA256).Hash
+          $nsisHash = (Get-FileHash $nsis -Algorithm SHA256).Hash
+          echo "msi_path=$($msi.FullName)" >> $env:GITHUB_OUTPUT
+          echo "nsis_path=$($nsis.FullName)" >> $env:GITHUB_OUTPUT
+          echo "msi_name=$($msi.Name)" >> $env:GITHUB_OUTPUT
+          echo "nsis_name=$($nsis.Name)" >> $env:GITHUB_OUTPUT
+          echo "msi_hash=$msiHash" >> $env:GITHUB_OUTPUT
+          echo "nsis_hash=$nsisHash" >> $env:GITHUB_OUTPUT
+
+      # === 5. Construct latest.json (MUST be explicit -- createUpdaterArtifacts ===
+      # === does NOT auto-generate latest.json, only .sig files) ===
+      - name: Build latest.json
+        shell: pwsh
+        working-directory: counterpick-app
+        run: |
+          # Read .sig file contents (base64 Ed25519 signature strings)
+          $msiSigFile = Get-ChildItem "src-tauri/target/release/bundle/msi/*.msi.sig" | Select-Object -First 1
+          if (-not $msiSigFile) { throw "No MSI .sig file found -- signing may have failed. Check TAURI_SIGNING_PRIVATE_KEY secret." }
+          $msiSig = (Get-Content $msiSigFile -Raw).Trim()
+
+          $tag = "${{ github.ref_name }}"
+          $version = $tag.TrimStart('v')
+          $msiName = "${{ steps.hashes.outputs.msi_name }}"
+          $url = "https://github.com/Chertixd/LoL-Draft-Helper/releases/download/$tag/$msiName"
+
+          # Assemble latest.json with exact platform key "windows-x86_64" (case-sensitive)
+          $json = @{
+            version  = $version
+            notes    = "See https://github.com/Chertixd/LoL-Draft-Helper/releases/tag/$tag"
+            pub_date = (Get-Date -Format 'o')
+            platforms = @{
+              "windows-x86_64" = @{
+                signature = $msiSig
+                url       = $url
+              }
+            }
+          } | ConvertTo-Json -Depth 5
+
+          # Write to a dedicated directory for peaceiris publish
+          New-Item -ItemType Directory -Path "latest-publish" -Force | Out-Null
+          $json | Out-File -FilePath "latest-publish/latest.json" -Encoding utf8NoBOM
+          Write-Host "latest.json written:"
+          Get-Content "latest-publish/latest.json"
+
+      # === 6. Create GitHub Release with artifacts and SHA256 body (per BUILD-02, BUILD-03) ===
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            ${{ steps.hashes.outputs.msi_path }}
+            ${{ steps.hashes.outputs.nsis_path }}
+          body: |
+            ## SHA256 Checksums
+
+            Verify your download with PowerShell:
+            ```powershell
+            (Get-FileHash "<filename>" -Algorithm SHA256).Hash
+            ```
+
+            | File | SHA256 |
+            |------|--------|
+            | ${{ steps.hashes.outputs.msi_name }} | `${{ steps.hashes.outputs.msi_hash }}` |
+            | ${{ steps.hashes.outputs.nsis_name }} | `${{ steps.hashes.outputs.nsis_hash }}` |
+
+      # === 7. Publish latest.json to gh-pages on CDN repo (per BUILD-04, UPD-02) ===
+      # CRITICAL: force_orphan MUST be false and keep_files MUST be true.
+      # The data pipeline uses force_orphan: true on this same branch for data/*.json.
+      # Using force_orphan here would wipe all CDN data files.
+      - name: Publish latest.json to CDN
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          personal_token: ${{ secrets.CDN_DEPLOY_TOKEN }}
+          external_repository: Chertixd/lol-draft-helper-cdn
+          publish_dir: counterpick-app/latest-publish
+          publish_branch: gh-pages
+          force_orphan: false
+          keep_files: true
+          user_name: 'github-actions[bot]'
+          user_email: 'github-actions[bot]@users.noreply.github.com'
+          commit_message: 'updater: publish latest.json ${{ github.ref_name }}'
