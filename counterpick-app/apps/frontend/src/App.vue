@@ -3,6 +3,7 @@ import { ref, onMounted, computed } from 'vue';
 import { RouterView, RouterLink } from 'vue-router';
 import { checkBackendHealth, getLeagueClientStatus } from '@/api/backend';
 import { initBackendListeners } from '@/api/client';
+import { checkForUpdates } from '@/updater';
 import { useDraftStore } from '@/stores/draft';
 import { useSettingsStore } from '@/stores/settings';
 import { useAppStatusStore } from '@/stores/appStatus';
@@ -48,6 +49,11 @@ function onLolConnected() {
 onMounted(async () => {
     // Initialize Tauri event listeners (backend-ready, backend-disconnected)
     await initBackendListeners();
+
+    // Check for updates after backend is ready (2s delay for sidecar startup)
+    setTimeout(() => {
+        checkForUpdates();
+    }, 2000);
 
     // Set up backend-disconnected handler for Tauri
     if ('__TAURI__' in window) {
