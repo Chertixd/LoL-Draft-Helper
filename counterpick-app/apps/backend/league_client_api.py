@@ -4,6 +4,7 @@ Stellt Verbindung zur League of Legends Client API her (für Draft-Phase)
 Nutzt requests für synchrone HTTP-Requests
 Implementiert nach Draftgap-Methode (Prozess-Argumente)
 """
+import logging
 import requests
 import json
 from typing import Optional, Dict, List
@@ -11,6 +12,8 @@ import urllib3
 import os
 from pathlib import Path
 from league_client_auth import get_league_client_info
+
+logger = logging.getLogger(__name__)
 
 # SSL-Warnungen unterdrücken (selbst-signiertes Zertifikat)
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -59,7 +62,7 @@ def _get_lcu_response(path: str) -> Optional[Dict]:
         if response.status_code == 401:
             # Auth-Fehler - invalidiere Cache
             _client_info_cache = None
-            print("[LEAGUE CLIENT] Authentifizierungsfehler (401) - Cache invalidiert")
+            logger.warning("Authentifizierungsfehler (401) - Cache invalidiert")
             return None
         
         if response.status_code == 200:
@@ -74,8 +77,7 @@ def _get_lcu_response(path: str) -> Optional[Dict]:
     except Exception as e:
         # Bei anderen Fehlern Cache invalidieren
         _client_info_cache = None
-        if __debug__:
-            print(f"[LEAGUE CLIENT] Fehler bei Request: {e}")
+        logger.debug("Fehler bei Request: %s", e)
         return None
 
 
@@ -147,10 +149,10 @@ def _load_champion_id_map() -> Dict[int, str]:
                 continue
         
         if _champion_id_map:
-            print(f"[LEAGUE CLIENT] Champion-Mapping aus Supabase geladen: {len(_champion_id_map)} Champions")
+            logger.info("Champion-Mapping aus Supabase geladen: %d Champions", len(_champion_id_map))
             return _champion_id_map
     except Exception as e:
-        print(f"[LEAGUE CLIENT] Supabase-Mapping fehlgeschlagen, nutze Dragontail-Fallback: {e}")
+        logger.info("Supabase-Mapping fehlgeschlagen, nutze Dragontail-Fallback: %s", e)
     
     # 2. Fallback: Data Dragon lokal (dragontail-15.24.1)
     base_path = Path(__file__).parent.parent
@@ -175,11 +177,10 @@ def _load_champion_id_map() -> Dict[int, str]:
                                 if champ_id > 0 and champ_name:
                                     _champion_id_map[champ_id] = champ_name
                     except Exception as e:
-                        if __debug__:
-                            print(f"[LEAGUE CLIENT] Fehler beim Laden von {champ_file}: {e}")
+                        logger.debug("Fehler beim Laden von %s: %s", champ_file, e)
         
         if _champion_id_map:
-            print(f"[LEAGUE CLIENT] Champion-Mapping aus Dragontail geladen: {len(_champion_id_map)} Champions")
+            logger.info("Champion-Mapping aus Dragontail geladen: %d Champions", len(_champion_id_map))
     
     return _champion_id_map
 
@@ -289,12 +290,12 @@ def get_draft_picks_bans() -> Optional[Dict]:
     if local_cell_id is not None:
         is_blue_side = local_cell_id < 5
         my_team_number = 0 if is_blue_side else 1
-        print(f"[TEAM-ERKENNUNG] localPlayerCellId={local_cell_id} -> is_blue_side={is_blue_side}, myTeam={my_team_number}")
+        logger.info("localPlayerCellId=%s -> is_blue_side=%s, myTeam=%s", local_cell_id, is_blue_side, my_team_number)
     else:
         # Fallback: myTeam ist team1
         is_blue_side = True
         my_team_number = 0
-        print(f"[TEAM-ERKENNUNG] Kein localPlayerCellId -> Fallback zu Blue Side")
+        logger.info("Kein localPlayerCellId -> Fallback zu Blue Side")
     
     # Extrahiere Picks und Hovers für ALLE Spieler (auch ohne Pick/Hover)
     # championId = gepickter Champion (locked)

@@ -34,6 +34,7 @@ import argparse
 import json
 import logging
 import logging.handlers
+import re
 import sys
 import time
 import os
@@ -66,6 +67,27 @@ try:
     HTTPX_AVAILABLE = True
 except ImportError:
     HTTPX_AVAILABLE = False
+
+class LCUAuthFilter(logging.Filter):
+    """Redacts LCU auth tokens from log records at write-time (LOG-05, D-13).
+
+    Defense-in-depth: catches riot:<password> tokens at any call site,
+    even if a developer adds a new logger.debug(url) that contains the token.
+    """
+    _pattern = re.compile(r'riot:[^\s"@]+', re.IGNORECASE)
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        record.msg = self._pattern.sub('riot:[REDACTED]', str(record.msg))
+        if record.args:
+            record.args = tuple(
+                self._pattern.sub('riot:[REDACTED]', a) if isinstance(a, str) else a
+                for a in record.args
+            )
+        return True  # always pass — filter modifies, not suppresses
+
+
+logger = logging.getLogger(__name__)
+
 
 # Lade .env-Datei.
 # Phase 1 D-14 / SIDE-05: path resolution routes through `bundled_resource`
@@ -143,10 +165,10 @@ def load_cache():
         try:
             with open(CACHE_FILE, 'r', encoding='utf-8') as f:
                 data = json.load(f)
-                print(f"[CACHE] {len(data)} Einträge aus Datei geladen")
+                logger.info("%d Einträge aus Cache-Datei geladen", len(data))
                 return data
         except Exception as e:
-            print(f"[CACHE] Fehler beim Laden: {e}")
+            logger.error("Fehler beim Laden des Caches: %s", e)
             return {}
     return {}
 
@@ -157,7 +179,7 @@ def save_cache(cache_data):
         with open(CACHE_FILE, 'w', encoding='utf-8') as f:
             json.dump(cache_data, f, ensure_ascii=False, indent=2)
     except Exception as e:
-        print(f"[CACHE] Fehler beim Speichern: {e}")
+        logger.error("Fehler beim Speichern des Caches: %s", e)
 
 
 # Lade existierenden Cache beim Start
@@ -179,21 +201,21 @@ def cached(cache_key_func):
             if cache_key in cache:
                 cached_data, timestamp = cache[cache_key]
                 if time.time() - timestamp < CACHE_DURATION:
-                    print(f"[CACHE HIT] {cache_key}")
+                    logger.debug("Cache HIT: %s", cache_key)
                     return cached_data
                 else:
-                    print(f"[CACHE EXPIRED] {cache_key}")
+                    logger.debug("Cache EXPIRED: %s", cache_key)
                     del cache[cache_key]
                     save_cache(cache)
-            
+
             # Nicht im Cache oder abgelaufen -> neu abrufen
-            print(f"[CACHE MISS] {cache_key} - Fetching from Lolalytics...")
+            logger.info("Cache MISS: %s - Fetching from Lolalytics...", cache_key)
             result = func(*args, **kwargs)
-            
+
             # Im Cache speichern
             cache[cache_key] = (result, time.time())
             save_cache(cache)  # Speichere nach jeder neuen Eintragung
-            print(f"[CACHED] {cache_key}")
+            logger.debug("Cached: %s", cache_key)
             
             return result
         return wrapper
@@ -313,15 +335,15 @@ def get_champion_info(champion):
         if cache_key in cache:
             cached_data, timestamp = cache[cache_key]
             if time.time() - timestamp < CACHE_DURATION:
-                print(f"[CACHE HIT] {cache_key}")
+                logger.debug("Cache HIT: %s", cache_key)
                 return jsonify(cached_data)
             else:
-                print(f"[CACHE EXPIRED] {cache_key}")
+                logger.debug("Cache EXPIRED: %s", cache_key)
                 del cache[cache_key]
                 save_cache(cache)
-        
+
         # Nicht im Cache - neu abrufen
-        print(f"[CACHE MISS] {cache_key} - Fetching from Lolalytics...")
+        logger.info("Cache MISS: %s - Fetching from Lolalytics...", cache_key)
         
         # API-Aufruf (mit normalisiertem Namen)
         result_json = get_champion_data(champion=champion_normalized, lane=lane, rank=rank, patch=patch)
@@ -340,8 +362,8 @@ def get_champion_info(champion):
         # Im Cache speichern (als Dict, nicht als Response-Objekt)
         cache[cache_key] = (response_dict, time.time())
         save_cache(cache)
-        print(f"[CACHED] {cache_key}")
-        
+        logger.debug("Cached: %s", cache_key)
+
         return jsonify(response_dict)
     
     except ValueError as e:
@@ -709,7 +731,7 @@ def get_batch_role_probabilities():
                 }, time.time())
                 
             except Exception as e:
-                print(f"[WARN] Fehler beim Laden der Wahrscheinlichkeiten für {champion}: {e}")
+                logger.warning("Fehler beim Laden der Wahrscheinlichkeiten für %s: %s", champion, e)
                 results[champion] = {
                     'error': str(e),
                     'probabilities': {'top': 0.2, 'jungle': 0.2, 'middle': 0.2, 'bottom': 0.2, 'support': 0.2},
@@ -725,7 +747,7 @@ def get_batch_role_probabilities():
         })
         
     except Exception as e:
-        print(f"[ERROR] Fehler in /api/champions/role-probabilities: {e}")
+        logger.error("Fehler in /api/champions/role-probabilities: %s", e)
         import traceback
         traceback.print_exc()
         return jsonify({
@@ -811,7 +833,7 @@ def get_champion_matchups(champion):
             'error': f'Champion nicht gefunden: {champion}'
         }), 404
     except Exception as e:
-        print(f"[ERROR] Fehler in /api/champion/{champion}/matchups: {e}")
+        logger.error("Fehler in /api/champion/%s/matchups: %s", champion, e)
         import traceback
         traceback.print_exc()
         return jsonify({
@@ -906,7 +928,7 @@ def get_champion_synergies(champion):
             'error': f'Champion nicht gefunden: {champion}'
         }), 404
     except Exception as e:
-        print(f"[ERROR] Fehler in /api/champion/{champion}/synergies: {e}")
+        logger.error("Fehler in /api/champion/%s/synergies: %s", champion, e)
         import traceback
         traceback.print_exc()
         return jsonify({
@@ -997,7 +1019,7 @@ def champion_name_to_key():
             except Exception as e:
                 # Champion nicht gefunden - verwende normalisierten Namen als Fallback
                 result[name] = normalized
-                print(f"[WARN] Champion '{name}' nicht gefunden, verwende '{normalized}' als Key")
+                logger.warning("Champion '%s' nicht gefunden, verwende '%s' als Key", name, normalized)
         
         return jsonify({
             'success': True,
@@ -1023,29 +1045,29 @@ def get_current_role(session):
         str: Die erkannte Rolle ('top', 'jungle', 'middle', 'bottom', 'support')
     """
     if not session or not isinstance(session, dict):
-        print("[ROLE ERROR] Session ist leer oder kein Dictionary")
+        logger.error("Session ist leer oder kein Dictionary")
         return 'top'
-    
+
     # Debug: Zeige Session-Struktur
     timer_phase = session.get('timer', {}).get('phase', 'UNKNOWN')
-    print(f"[DEBUG ROLE] Draft-Phase: {timer_phase}")
-    
+    logger.debug("Draft-Phase: %s", timer_phase)
+
     # 1. Finde die localPlayerCellId
     local_cell_id = session.get('localPlayerCellId')
     if local_cell_id is None:
-        print("[ROLE ERROR] localPlayerCellId nicht in Session gefunden")
+        logger.error("localPlayerCellId nicht in Session gefunden")
         return 'top'  # Fallback
-    
-    print(f"[DEBUG ROLE] LocalPlayerCellId: {local_cell_id}")
-    
+
+    logger.debug("LocalPlayerCellId: %s", local_cell_id)
+
     # 2. Suche den Spieler im myTeam Array anhand der cellId
     my_team = session.get('myTeam', [])
     if not my_team:
-        print("[ROLE ERROR] myTeam ist leer")
+        logger.error("myTeam ist leer")
         return 'top'
-    
-    print(f"[DEBUG ROLE] myTeam hat {len(my_team)} Spieler")
-    
+
+    logger.debug("myTeam hat %d Spieler", len(my_team))
+
     # Finde den Spieler mit matching cellId
     me = None
     for i, player in enumerate(my_team):
@@ -1053,33 +1075,33 @@ def get_current_role(session):
             cell_id = player.get('cellId')
             assigned_pos = player.get('assignedPosition', '')
             summoner_id = player.get('summonerId', '')
-            print(f"[DEBUG ROLE] Player {i}: cellId={cell_id}, assignedPosition='{assigned_pos}', summonerId={summoner_id}")
+            logger.debug("Player %d: cellId=%s, assignedPosition='%s', summonerId=%s", i, cell_id, assigned_pos, summoner_id)
             if cell_id == local_cell_id:
                 me = player
-                print(f"[DEBUG ROLE] Lokaler Spieler gefunden bei Index {i}")
+                logger.debug("Lokaler Spieler gefunden bei Index %d", i)
                 break
-    
+
     if not me:
         available_cell_ids = [p.get('cellId') for p in my_team if isinstance(p, dict)]
-        print(f"[ROLE ERROR] Spieler mit CellId {local_cell_id} nicht in myTeam gefunden. Verfügbare CellIds: {available_cell_ids}")
+        logger.error("Spieler mit CellId %s nicht in myTeam gefunden. Verfügbare CellIds: %s", local_cell_id, available_cell_ids)
         return 'top'
-    
+
     # 3. Lese assignedPosition aus (wie Draftgap)
     assigned_position = me.get('assignedPosition', '')
-    
+
     # Debug: Zeige alle verfügbaren Felder des Spielers
-    print(f"[DEBUG ROLE] Spieler-Daten: {list(me.keys())}")
-    
+    logger.debug("Spieler-Daten: %s", list(me.keys()))
+
     if not assigned_position or assigned_position == '':
-        print(f"[ROLE WARNING] assignedPosition ist leer/None für CellId {local_cell_id}")
-        print(f"[ROLE WARNING] Mögliche Gründe: 1) Noch nicht zugewiesen, 2) Blind Pick, 3) Frühe Draft-Phase")
-        print(f"[ROLE WARNING] Draft-Phase: {timer_phase}")
-        
+        logger.warning("assignedPosition ist leer/None für CellId %s", local_cell_id)
+        logger.warning("Mögliche Gründe: 1) Noch nicht zugewiesen, 2) Blind Pick, 3) Frühe Draft-Phase")
+        logger.warning("Draft-Phase: %s", timer_phase)
+
         # Alternative: Versuche Rolle aus Actions zu extrahieren
         # In Draftgap wird die Rolle auch aus den Actions gelesen, wenn assignedPosition leer ist
         actions = session.get('actions', [])
         if actions:
-            print(f"[DEBUG ROLE] Versuche Rolle aus Actions zu extrahieren...")
+            logger.debug("Versuche Rolle aus Actions zu extrahieren...")
             # Actions ist ein Array von Arrays - jede Runde hat ein Array von Actions
             for action_round in actions:
                 if isinstance(action_round, list):
@@ -1091,17 +1113,17 @@ def get_current_role(session):
                             if actor_cell_id == local_cell_id and action_type == 'pick':
                                 # Leider haben Actions keine direkte Rolle, aber wir können prüfen
                                 # ob es eine completed Action gibt, die auf eine Rolle hinweist
-                                print(f"[DEBUG ROLE] Pick-Action gefunden für CellId {local_cell_id}")
-        
+                                logger.debug("Pick-Action gefunden für CellId %s", local_cell_id)
+
         # In frühen Phasen kann assignedPosition noch leer sein
         # Prüfe ob wir in einer Phase sind, wo Rollen normalerweise schon zugewiesen sind
         if timer_phase in ['PLANNING', 'BAN_PICK']:
-            print(f"[ROLE WARNING] In Phase {timer_phase} - Rolle sollte normalerweise zugewiesen sein")
-        
+            logger.warning("In Phase %s - Rolle sollte normalerweise zugewiesen sein", timer_phase)
+
         return 'top'  # Fallback
-    
+
     raw_role = str(assigned_position).lower().strip()
-    print(f"[DEBUG ROLE] API Raw assignedPosition: '{raw_role}' | CellID: {local_cell_id}")
+    logger.debug("API Raw assignedPosition: '%s' | CellID: %s", raw_role, local_cell_id)
     
     # 4. Mapping der Riot-Begriffe auf Standard-Begriffe (wie Draftgap)
     # Draftgap verwendet: top, jungle, bottom, middle, utility -> support
@@ -1119,9 +1141,9 @@ def get_current_role(session):
     detected_role = role_map.get(raw_role, 'top')
     
     if detected_role == 'top' and raw_role not in ['top', 'invalid', '']:
-        print(f"[ROLE WARNING] Unbekannte Rolle '{raw_role}' -> Fallback zu 'top'")
-    
-    print(f"[ROLE DETECTED] '{raw_role}' -> '{detected_role}' (CellID: {local_cell_id}, Phase: {timer_phase})")
+        logger.warning("Unbekannte Rolle '%s' -> Fallback zu 'top'", raw_role)
+
+    logger.info("Rolle erkannt: '%s' -> '%s' (CellID: %s, Phase: %s)", raw_role, detected_role, local_cell_id, timer_phase)
     return detected_role
 
 
@@ -1239,7 +1261,7 @@ def set_role():
         # Check if role should be disabled (null or "auto")
         if role is None or (isinstance(role, str) and role.lower() == 'auto'):
             MANUAL_ROLE_OVERRIDE = None
-            print("[SET-ROLE] Manuelle Rollen-Überschreibung deaktiviert (automatische Erkennung aktiv)")
+            logger.info("Manuelle Rollen-Überschreibung deaktiviert (automatische Erkennung aktiv)")
             return jsonify({
                 'success': True,
                 'role': 'auto',
@@ -1262,7 +1284,7 @@ def set_role():
         
         # Set the override
         MANUAL_ROLE_OVERRIDE = role_lower
-        print(f"[SET-ROLE] Manuelle Rollen-Überschreibung gesetzt: '{MANUAL_ROLE_OVERRIDE}'")
+        logger.info("Manuelle Rollen-Überschreibung gesetzt: '%s'", MANUAL_ROLE_OVERRIDE)
         return jsonify({
             'success': True,
             'role': MANUAL_ROLE_OVERRIDE,
@@ -1270,7 +1292,7 @@ def set_role():
         })
         
     except Exception as e:
-        print(f"[ERROR] Fehler in /api/set-role: {e}")
+        logger.error("Fehler in /api/set-role: %s", e)
         import traceback
         traceback.print_exc()
         return jsonify({
@@ -1326,28 +1348,28 @@ def get_recommendations():
         
         if MANUAL_ROLE_OVERRIDE is not None:
             my_role = MANUAL_ROLE_OVERRIDE
-            print(f"[RECOMMENDATIONS] Verwende manuelle Rollen-Überschreibung: '{my_role}'")
+            logger.info("Verwende manuelle Rollen-Überschreibung: '%s'", my_role)
         elif my_role:
             # Verwende Rolle aus Frontend-Request
-            print(f"[RECOMMENDATIONS] Verwende Rolle aus Frontend-Request: '{my_role}'")
+            logger.info("Verwende Rolle aus Frontend-Request: '%s'", my_role)
         else:
             # Automatische Erkennung aus Session
-            print("[RECOMMENDATIONS] Keine Rolle im Request - versuche automatische Erkennung aus Session...")
+            logger.info("Keine Rolle im Request - versuche automatische Erkennung aus Session...")
             session_data = get_draft_session()
             if session_data:
                 detected_role = get_current_role(session_data)
                 if detected_role:
                     my_role = detected_role
-                    print(f"[RECOMMENDATIONS] Rolle automatisch aus Session ermittelt: '{my_role}'")
+                    logger.info("Rolle automatisch aus Session ermittelt: '%s'", my_role)
                 else:
-                    print("[RECOMMENDATIONS] Konnte Rolle nicht aus Session ermitteln")
+                    logger.warning("Konnte Rolle nicht aus Session ermitteln")
             else:
-                print("[RECOMMENDATIONS] Keine Draft-Session verfügbar")
-        
+                logger.info("Keine Draft-Session verfügbar")
+
         # Stelle sicher, dass myRole gesetzt ist
         if not my_role:
             my_role = 'top'  # Letzter Fallback
-            print(f"[RECOMMENDATIONS] Verwende Fallback-Rolle: '{my_role}'")
+            logger.info("Verwende Fallback-Rolle: '%s'", my_role)
         
         # Rufe Recommendation Engine auf mit Error Handling für DB-Verbindungsfehler
         try:
@@ -1365,21 +1387,21 @@ def get_recommendations():
             
             # Prüfe auf RemoteProtocolError (Server disconnected)
             if HTTPCORE_AVAILABLE and isinstance(db_error, httpcore.RemoteProtocolError):
-                print(f"[ERROR] Database connection error (httpcore.RemoteProtocolError): {error_msg}")
+                logger.error("Database connection error (httpcore.RemoteProtocolError): %s", error_msg)
                 return jsonify({
                     'success': False,
                     'error': 'Database connection lost. Please try again.',
                     'error_type': 'RemoteProtocolError'
                 }), 503  # Service Unavailable
             elif HTTPX_AVAILABLE and isinstance(db_error, httpx.RemoteProtocolError):
-                print(f"[ERROR] Database connection error (httpx.RemoteProtocolError): {error_msg}")
+                logger.error("Database connection error (httpx.RemoteProtocolError): %s", error_msg)
                 return jsonify({
                     'success': False,
                     'error': 'Database connection lost. Please try again.',
                     'error_type': 'RemoteProtocolError'
                 }), 503
             elif 'Server disconnected' in error_msg or 'RemoteProtocolError' in error_type:
-                print(f"[ERROR] Database connection error: {error_msg}")
+                logger.error("Database connection error: %s", error_msg)
                 return jsonify({
                     'success': False,
                     'error': 'Database connection lost. Please try again.',
@@ -1396,13 +1418,13 @@ def get_recommendations():
             return jsonify(result), 500
             
     except requests.exceptions.RequestException as e:
-        print(f"[ERROR] Request exception in /api/recommendations: {e}")
+        logger.error("Request exception in /api/recommendations: %s", e)
         return jsonify({
             'success': False,
             'error': f'Request failed: {str(e)}'
         }), 500
     except Exception as e:
-        print(f"[ERROR] Fehler in /api/recommendations: {e}")
+        logger.error("Fehler in /api/recommendations: %s", e)
         import traceback
         traceback.print_exc()
         return jsonify({
@@ -1448,7 +1470,7 @@ def internal_error(error):
 @socketio.on('connect')
 def handle_connect():
     """Handler für WebSocket-Verbindung vom Frontend"""
-    print(f"[SOCKETIO] Client verbunden: {request.sid}")
+    logger.info("Client verbunden: %s", request.sid)
     
     # Starte League Client WebSocket-Verbindung wenn noch nicht verbunden
     if not is_websocket_connected():
@@ -1461,15 +1483,15 @@ def handle_connect():
             time.sleep(0.5)  # Kurz warten, damit Verbindung stabil ist
             draft_data = get_draft_picks_bans()
             if draft_data and (draft_data.get('team1_picks') or draft_data.get('team2_picks')):
-                print(f"[SOCKETIO] Sende initiale Draft-Daten an neuen Client")
+                logger.info("Sende initiale Draft-Daten an neuen Client")
                 socketio.emit('draft_update', {
                     'success': True,
                     'draft': draft_data
                 })
             else:
-                print("[SOCKETIO] Keine initialen Draft-Daten verfügbar (nicht in Draft-Phase)")
+                logger.info("Keine initialen Draft-Daten verfügbar (nicht in Draft-Phase)")
         except Exception as e:
-            print(f"[SOCKETIO] Fehler beim Senden initialer Draft-Daten: {e}")
+            logger.error("Fehler beim Senden initialer Draft-Daten: %s", e)
             import traceback
             traceback.print_exc()
     
@@ -1479,7 +1501,7 @@ def handle_connect():
 @socketio.on('disconnect')
 def handle_disconnect():
     """Handler für WebSocket-Trennung vom Frontend"""
-    print(f"[SOCKETIO] Client getrennt: {request.sid}")
+    logger.info("Client getrennt: %s", request.sid)
 
 
 # HTTP-Polling als Fallback (wenn WebSocket nicht verfügbar)
@@ -1505,7 +1527,7 @@ def poll_draft_data():
                 current_state = str(draft_data.get('team1_picks', [])) + str(draft_data.get('team2_picks', []))
                 if current_state != last_draft_state:
                     last_draft_state = current_state
-                    print(f"[POLLING] Draft-Update: Team1={len(draft_data.get('team1_picks', []))} Picks, Team2={len(draft_data.get('team2_picks', []))} Picks")
+                    logger.info("Draft-Update: Team1=%d Picks, Team2=%d Picks", len(draft_data.get('team1_picks', [])), len(draft_data.get('team2_picks', [])))
                     
                     # Sende Update an Frontend
                     def send_update():
@@ -1515,7 +1537,7 @@ def poll_draft_data():
                                 'draft': draft_data
                             })
                         except Exception as e:
-                            print(f"[POLLING] Fehler beim Senden: {e}")
+                            logger.error("Fehler beim Senden des Polling-Updates: %s", e)
                     
                     threading.Thread(target=send_update, daemon=True).start()
             
@@ -1525,7 +1547,7 @@ def poll_draft_data():
             # Fehler ist normal wenn Client nicht läuft oder nicht in Draft
             time.sleep(2)  # Warte länger bei Fehlern
     
-    print("[POLLING] Draft-Polling beendet")
+    logger.info("Draft-Polling beendet")
 
 # Letzter gesendeter Draft-State (für Vergleich)
 _last_draft_state = None
@@ -1600,15 +1622,15 @@ def handle_draft_event(event_data):
                 # Reset Draft-State wenn wir nicht mehr in Champion Select sind
                 if phase in ['None', 'Lobby', 'Matchmaking', 'InProgress', 'EndOfGame', 'WaitingForStats']:
                     if _last_draft_state is not None:
-                        print(f"[SOCKETIO] Gameflow-Phase: {phase} - Draft-State zurückgesetzt")
+                        logger.info("Gameflow-Phase: %s - Draft-State zurückgesetzt", phase)
                         _last_draft_state = None
                         # Sende Reset-Event an Frontend
                         def send_reset():
                             try:
                                 socketio.emit('draft_reset', {'phase': phase})
-                                print(f"[SOCKETIO] Draft-Reset an Frontend gesendet (Phase: {phase})")
+                                logger.info("Draft-Reset an Frontend gesendet (Phase: %s)", phase)
                             except Exception as e:
-                                print(f"[SOCKETIO] Fehler beim Senden des Reset-Events: {e}")
+                                logger.error("Fehler beim Senden des Reset-Events: %s", e)
                         threading.Thread(target=send_reset, daemon=True).start()
                 return
             
@@ -1629,7 +1651,7 @@ def handle_draft_event(event_data):
                     # Zähle locked picks für Logging
                     team1_locked = sum(1 for p in team1_picks if p.get('isLocked'))
                     team2_locked = sum(1 for p in team2_picks if p.get('isLocked'))
-                    print(f"[SOCKETIO] Draft-Änderung erkannt: Team1={team1_locked} locked, Team2={team2_locked} locked")
+                    logger.info("Draft-Änderung erkannt: Team1=%d locked, Team2=%d locked", team1_locked, team2_locked)
                     
                     # Bestimme myTeam basierend auf localPlayerCellId
                     # cellIds 0-4 = Blue Side (team1), cellIds 5-9 = Red Side (team2)
@@ -1638,14 +1660,14 @@ def handle_draft_event(event_data):
                         local_cell_id = session.get('localPlayerCellId')
                         if local_cell_id is not None:
                             draft_data['myTeam'] = 0 if local_cell_id < 5 else 1
-                            print(f"[SOCKETIO] Team-Erkennung: localPlayerCellId={local_cell_id} -> myTeam={draft_data['myTeam']} ({'Blue' if draft_data['myTeam'] == 0 else 'Red'} Side)")
+                            logger.info("Team-Erkennung: localPlayerCellId=%s -> myTeam=%s (%s Side)", local_cell_id, draft_data['myTeam'], 'Blue' if draft_data['myTeam'] == 0 else 'Red')
                         elif 'myTeam' not in draft_data:
                             draft_data['myTeam'] = 0  # Fallback
                         
                         # Ermittle myRole aus Session
                         my_role = get_current_role(session)
                         draft_data['myRole'] = my_role
-                        print(f"[SOCKETIO] Rolle des lokalen Spielers: {my_role}")
+                        logger.info("Rolle des lokalen Spielers: %s", my_role)
                     elif 'myTeam' not in draft_data:
                         draft_data['myTeam'] = 0  # Fallback wenn keine Session
                     
@@ -1659,13 +1681,13 @@ def handle_draft_event(event_data):
                                 'success': True,
                                 'draft': draft_data
                             })
-                            print("[SOCKETIO] Draft-Update an Frontend gesendet")
+                            logger.info("Draft-Update an Frontend gesendet")
                         except Exception as e:
-                            print(f"[SOCKETIO] Fehler beim Senden des Updates: {e}")
+                            logger.error("Fehler beim Senden des Updates: %s", e)
                     
                     threading.Thread(target=send_update, daemon=True).start()
     except Exception as e:
-        print(f"[SOCKETIO] Fehler beim Verarbeiten des Draft-Events: {e}")
+        logger.error("Fehler beim Verarbeiten des Draft-Events: %s", e)
         import traceback
         traceback.print_exc()
 
@@ -1699,23 +1721,23 @@ def poll_for_lockfile():
             client_info = get_league_client_info()
             
             if client_info:
-                print("[SOCKETIO] Lockfile gefunden! Starte WebSocket-Verbindung...")
+                logger.info("Lockfile gefunden! Starte WebSocket-Verbindung...")
                 _lockfile_polling_active = False
                 start_league_client_websocket()
                 return
             
             attempt += 1
             if attempt % 12 == 0:  # Alle 60 Sekunden
-                print(f"[SOCKETIO] Warte auf Lockfile... ({attempt * 5} Sekunden)")
+                logger.info("Warte auf Lockfile... (%d Sekunden)", attempt * 5)
             
             time.sleep(5)  # Warte 5 Sekunden zwischen Versuchen
             
         except Exception as e:
-            print(f"[SOCKETIO] Fehler beim Polling: {e}")
+            logger.error("Fehler beim Polling: %s", e)
             time.sleep(5)
-    
+
     if attempt >= max_attempts:
-        print("[SOCKETIO] Lockfile-Polling beendet (Timeout nach 5 Minuten)")
+        logger.warning("Lockfile-Polling beendet (Timeout nach 5 Minuten)")
         _lockfile_polling_active = False
 
 def start_league_client_websocket():
@@ -1726,10 +1748,10 @@ def start_league_client_websocket():
     global _lockfile_polling_thread, _lockfile_polling_active, _draft_polling_thread, _draft_polling_active
     
     try:
-        print("[SOCKETIO] Starte League Client WebSocket-Verbindung...")
+        logger.info("Starte League Client WebSocket-Verbindung...")
         success = connect_to_league_client_websocket(handle_draft_event)
         if success:
-            print("[SOCKETIO] League Client WebSocket-Verbindung erfolgreich gestartet")
+            logger.info("League Client WebSocket-Verbindung erfolgreich gestartet")
             _lockfile_polling_active = False  # Stoppe Lockfile-Polling
             _draft_polling_active = False  # Stoppe HTTP-Polling (WebSocket ist besser)
             
@@ -1741,24 +1763,24 @@ def start_league_client_websocket():
                         'message': 'League Client verbunden (WebSocket)'
                     })
                 except Exception as e:
-                    print(f"[SOCKETIO] Fehler beim Senden des Status: {e}")
-            
+                    logger.error("Fehler beim Senden des Status: %s", e)
+
             threading.Thread(target=send_status, daemon=True).start()
         else:
             # Lockfile nicht gefunden - nutze HTTP-Polling als Fallback
-            print("[SOCKETIO] WebSocket nicht verfügbar - starte HTTP-Polling als Fallback...")
+            logger.info("WebSocket nicht verfügbar - starte HTTP-Polling als Fallback...")
             
             # Starte HTTP-Polling wenn noch nicht aktiv
             if not _draft_polling_active:
                 _draft_polling_thread = threading.Thread(target=poll_draft_data, daemon=True)
                 _draft_polling_thread.start()
-                print("[SOCKETIO] HTTP-Polling gestartet (prüft alle 1 Sekunde)")
-            
+                logger.info("HTTP-Polling gestartet (prüft alle 1 Sekunde)")
+
             # Starte auch Lockfile-Polling (falls Client später startet)
             if not _lockfile_polling_active:
                 _lockfile_polling_thread = threading.Thread(target=poll_for_lockfile, daemon=True)
                 _lockfile_polling_thread.start()
-                print("[SOCKETIO] Lockfile-Polling gestartet (prüft alle 5 Sekunden)")
+                logger.info("Lockfile-Polling gestartet (prüft alle 5 Sekunden)")
             
             # Sende Status an Frontend (in separatem Thread)
             def send_status():
@@ -1768,12 +1790,12 @@ def start_league_client_websocket():
                         'message': 'HTTP-Polling aktiv (WebSocket nicht verfügbar)'
                     })
                 except Exception as e:
-                    print(f"[SOCKETIO] Fehler beim Senden des Status: {e}")
-            
+                    logger.error("Fehler beim Senden des Status: %s", e)
+
             threading.Thread(target=send_status, daemon=True).start()
     except Exception as e:
         error_msg = f"Fehler beim Starten der League Client Verbindung: {e}"
-        print(f"[SOCKETIO] {error_msg}")
+        logger.error("%s", error_msg)
         import traceback
         traceback.print_exc()
         
@@ -1781,7 +1803,7 @@ def start_league_client_websocket():
         if not _draft_polling_active:
             _draft_polling_thread = threading.Thread(target=poll_draft_data, daemon=True)
             _draft_polling_thread.start()
-            print("[SOCKETIO] HTTP-Polling als Fallback gestartet")
+            logger.info("HTTP-Polling als Fallback gestartet")
         
         # Sende Fehler-Status an Frontend (in separatem Thread)
         def send_error():
@@ -1791,7 +1813,7 @@ def start_league_client_websocket():
                     'message': 'HTTP-Polling aktiv (Fallback-Modus)'
                 })
             except Exception as e:
-                print(f"[SOCKETIO] Fehler beim Senden des Fehler-Status: {e}")
+                logger.error("Fehler beim Senden des Fehler-Status: %s", e)
         
         threading.Thread(target=send_error, daemon=True).start()
 
@@ -1800,11 +1822,9 @@ def _configure_logging(log_dir: Path) -> None:
     """
     Configure the root logger with a daily-rotating file handler.
 
-    Phase 1 ships only the bare rotating handler; full LCU-auth-redaction
-    and structured logging land in Phase 3 (LOG-01..05). The `print()`
-    calls elsewhere in this file intentionally remain — CONVENTIONS
-    preserves the print-with-bracket-prefix style for existing code;
-    new code in `main()` uses `logging.getLogger(__name__)`.
+    LOG-01: Structured log files in %APPDATA%/dev.till.lol-draft-analyzer/logs/.
+    LOG-04: Rotated files named backend-YYYY-MM-DD.log (active file stays backend.log).
+    LOG-05: LCUAuthFilter redacts riot:<password> tokens at write-time (D-13).
 
     :param log_dir: Directory to write ``backend.log`` into. Created
         if missing.
@@ -1816,12 +1836,17 @@ def _configure_logging(log_dir: Path) -> None:
         backupCount=14,
         encoding="utf-8",
     )
+    # Rename rotated files to backend-YYYY-MM-DD.log (LOG-04)
+    handler.suffix = "%Y-%m-%d"
+    handler.namer = lambda name: name.replace("backend.log.", "backend-") + ".log"
     handler.setFormatter(
         logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
     )
     root = logging.getLogger()
     root.setLevel(logging.INFO)
     root.addHandler(handler)
+    # LCU auth redaction at write-time (LOG-05, D-13)
+    root.addFilter(LCUAuthFilter())
 
 
 def _atomic_write_ready_file(path: Path, payload: dict) -> None:
@@ -1998,25 +2023,24 @@ def main() -> None:
     )
     probe.start()
 
-    # Legacy dev-mode startup banner (kept for parity with existing
-    # console-run ergonomics; CONVENTIONS preserves print-based prefixed
-    # output for existing code).
-    print("=" * 60)
-    print("COUNTERPICK DRAFT TRACKER BACKEND")
-    print("=" * 60)
-    print("\nVerfügbare Endpunkte:")
-    print("  GET  /api/health                    - Health Check")
-    print("  GET  /api/champions/list            - Champion-Liste")
-    print("  GET  /api/primary-roles             - Primary Roles Mapping")
-    print("  POST /api/recommendations           - Recommendation Engine")
-    print("  GET  /api/league-client/status      - League Client Status")
-    print("  GET  /api/league-client/draft       - League Client Draft-Daten")
-    print("  GET  /api/league-client/session     - League Client Session-Daten")
-    print("  POST /api/set-role                  - Manuelle Rollen-Überschreibung")
-    print("\n" + "=" * 60)
-    print(f"Cache-Dauer: {CACHE_DURATION}s ({CACHE_DURATION // 60} Minuten)")
-    print(f"Bind: 127.0.0.1:{args.port}")
-    print("=" * 60 + "\n")
+    # Startup banner — logged at INFO so it appears in the log file
+    # as well as on the console (StreamHandler added below in dev mode).
+    log.info("=" * 60)
+    log.info("COUNTERPICK DRAFT TRACKER BACKEND")
+    log.info("=" * 60)
+    log.info("Verfügbare Endpunkte:")
+    log.info("  GET  /api/health                    - Health Check")
+    log.info("  GET  /api/champions/list            - Champion-Liste")
+    log.info("  GET  /api/primary-roles             - Primary Roles Mapping")
+    log.info("  POST /api/recommendations           - Recommendation Engine")
+    log.info("  GET  /api/league-client/status      - League Client Status")
+    log.info("  GET  /api/league-client/draft       - League Client Draft-Daten")
+    log.info("  GET  /api/league-client/session     - League Client Session-Daten")
+    log.info("  POST /api/set-role                  - Manuelle Rollen-Überschreibung")
+    log.info("=" * 60)
+    log.info("Cache-Dauer: %ds (%d Minuten)", CACHE_DURATION, CACHE_DURATION // 60)
+    log.info("Bind: 127.0.0.1:%d", args.port)
+    log.info("=" * 60)
 
     # Security (Sec-7): bind loopback ONLY, never 0.0.0.0.
     # debug=False: Werkzeug reloader spawns a subprocess that breaks

@@ -5,9 +5,12 @@ Implementiert nach Draftgap-Methode
 """
 import os
 import base64
+import logging
 import subprocess
 import re
 from typing import Optional, Dict
+
+logger = logging.getLogger(__name__)
 
 
 def get_league_client_info_from_process() -> Optional[Dict]:
@@ -43,22 +46,22 @@ def get_league_client_info_from_process() -> Optional[Dict]:
             )
         
         if result.returncode != 0 or not result.stdout:
-            print("[PROCESS] LeagueClientUx.exe Prozess nicht gefunden")
-            print(f"[PROCESS] PowerShell Output: {result.stdout}")
-            print(f"[PROCESS] PowerShell Error: {result.stderr}")
+            logger.warning("LeagueClientUx.exe Prozess nicht gefunden")
+            logger.debug("PowerShell Output: %s", result.stdout)
+            logger.debug("PowerShell Error: %s", result.stderr)
             return None
         
         command_line = result.stdout.strip()
         
         if not command_line:
-            print("[PROCESS] CommandLine ist leer - League Client läuft möglicherweise nicht")
+            logger.warning("CommandLine ist leer - League Client läuft möglicherweise nicht")
             return None
         
         # Extrahiere Port mit Regex
         port_match = re.search(r'--app-port=(\d+)', command_line)
         if not port_match:
-            print("[PROCESS] Port nicht in Prozess-Argumenten gefunden")
-            print(f"[PROCESS] CommandLine: {command_line[:200]}...")  # Erste 200 Zeichen für Debugging
+            logger.warning("Port nicht in Prozess-Argumenten gefunden")
+            logger.debug("CommandLine: %s...", command_line[:200])
             return None
         
         port = int(port_match.group(1))
@@ -66,12 +69,12 @@ def get_league_client_info_from_process() -> Optional[Dict]:
         # Extrahiere Auth-Token mit Regex
         password_match = re.search(r'--remoting-auth-token=([a-zA-Z0-9_-]+)', command_line)
         if not password_match:
-            print("[PROCESS] Auth-Token nicht in Prozess-Argumenten gefunden")
+            logger.warning("Auth-Token nicht in Prozess-Argumenten gefunden")
             return None
         
         password = password_match.group(1)
         
-        print(f"[PROCESS] League Client gefunden! Port: {port}, Token: {len(password)} Zeichen")
+        logger.info("League Client gefunden! Port: %d, Token: %d Zeichen", port, len(password))
         
         return {
             'port': port,
@@ -81,12 +84,10 @@ def get_league_client_info_from_process() -> Optional[Dict]:
         }
         
     except FileNotFoundError:
-        print("[PROCESS] PowerShell nicht gefunden - ist Windows installiert?")
+        logger.error("PowerShell nicht gefunden - ist Windows installiert?")
         return None
     except Exception as e:
-        print(f"[PROCESS] Fehler beim Auslesen der Prozess-Argumente: {e}")
-        import traceback
-        traceback.print_exc()
+        logger.error("Fehler beim Auslesen der Prozess-Argumente: %s", e, exc_info=True)
         return None
 
 
@@ -108,8 +109,8 @@ def get_league_client_info() -> Optional[Dict]:
     client_info = get_league_client_info_from_process()
     
     if not client_info:
-        print("[AUTH] League Client Info nicht verfügbar")
-        print("[AUTH] Stelle sicher, dass der League Client läuft und vollständig geladen ist!")
+        logger.warning("League Client Info nicht verfügbar")
+        logger.warning("Stelle sicher, dass der League Client läuft und vollständig geladen ist!")
         return None
     
     return {

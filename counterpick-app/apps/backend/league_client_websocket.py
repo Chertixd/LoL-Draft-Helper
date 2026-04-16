@@ -4,6 +4,7 @@ Stellt WebSocket-Verbindung zur League Client API her für Echtzeit-Draft-Events
 """
 import websocket
 import json
+import logging
 import threading
 import time
 import ssl
@@ -11,6 +12,8 @@ from typing import Optional, Callable, Dict
 import urllib3
 from league_client_auth import get_league_client_info, get_auth_header
 import base64
+
+logger = logging.getLogger(__name__)
 
 # SSL-Warnungen unterdrücken
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -92,7 +95,7 @@ def on_message(ws, message):
                 is_relevant = any(relevant_uri in uri for relevant_uri in relevant_uris)
                 
                 if is_relevant:
-                    print(f"[WEBSOCKET] Relevantes Event: {uri}")
+                    logger.info("Relevantes Event: %s", uri)
                 
                 # Prüfe ob es ein Champion Select Session Event ist
                 if '/lol-champ-select/v1/session' in uri:
@@ -122,7 +125,7 @@ def on_message(ws, message):
             ]
             
             if any(relevant_uri in uri for relevant_uri in relevant_uris):
-                print(f"[WEBSOCKET] Relevantes Event: {uri}")
+                logger.info("Relevantes Event: %s", uri)
             
             if '/lol-champ-select/v1/session' in uri:
                 if _event_callback:
@@ -131,13 +134,9 @@ def on_message(ws, message):
                 if _event_callback:
                     _event_callback(data)
     except json.JSONDecodeError as e:
-        if __debug__:
-            print(f"[WEBSOCKET] JSON Decode Error: {e}, Message: {message[:100]}")
+        logger.debug("JSON Decode Error: %s, Message: %s", e, message[:100])
     except Exception as e:
-        if __debug__:
-            print(f"[WEBSOCKET] Fehler beim Verarbeiten der Nachricht: {e}")
-            import traceback
-            traceback.print_exc()
+        logger.debug("Fehler beim Verarbeiten der Nachricht: %s", e, exc_info=True)
 
 
 def on_error(ws, error):
@@ -147,8 +146,7 @@ def on_error(ws, error):
     global _is_connected
     _is_connected = False
     
-    if __debug__:
-        print(f"[WEBSOCKET] Fehler: {error}")
+    logger.debug("Fehler: %s", error)
 
 
 def on_close(ws, close_status_code, close_msg):
@@ -159,8 +157,7 @@ def on_close(ws, close_status_code, close_msg):
     _is_connected = False
     _ws_connection = None
     
-    if __debug__:
-        print(f"[WEBSOCKET] Verbindung geschlossen: {close_status_code} - {close_msg}")
+    logger.debug("Verbindung geschlossen: %s - %s", close_status_code, close_msg)
     
     # Automatische Reconnection nur wenn:
     # 1. Callback gesetzt ist
@@ -173,7 +170,7 @@ def on_close(ws, close_status_code, close_msg):
             time.sleep(_reconnect_interval)
             connect_to_league_client_websocket(_event_callback)
         else:
-            print("[WEBSOCKET] Keine Reconnection - League Client nicht verfügbar")
+            logger.info("Keine Reconnection - League Client nicht verfügbar")
 
 
 def on_open(ws):
@@ -183,8 +180,7 @@ def on_open(ws):
     global _is_connected
     _is_connected = True
     
-    if __debug__:
-        print("[WEBSOCKET] Verbindung hergestellt")
+    logger.debug("Verbindung hergestellt")
     
     # Subscribe auf Champion Select Events
     subscribe_to_champion_select_events(ws)
@@ -200,10 +196,9 @@ def subscribe_to_champion_select_events(ws):
         subscribe_message = [5, "OnJsonApiEvent", "/lol-champ-select/v1/session", {}]
         ws.send(json.dumps(subscribe_message))
         
-        print("[WEBSOCKET] Subscribed auf Champion Select Events")
+        logger.info("Subscribed auf Champion Select Events")
     except Exception as e:
-        if __debug__:
-            print(f"[WEBSOCKET] Fehler beim Subscribe: {e}")
+        logger.debug("Fehler beim Subscribe: %s", e)
 
 
 def connect_to_league_client_websocket(event_callback: Callable[[Dict], None]) -> bool:
@@ -225,8 +220,8 @@ def connect_to_league_client_websocket(event_callback: Callable[[Dict], None]) -
     
     websocket_url = get_websocket_url()
     if not websocket_url:
-        print("[WEBSOCKET] Keine WebSocket URL verfügbar (League Client nicht gefunden)")
-        print("[WEBSOCKET] Stelle sicher, dass der League Client läuft und vollständig geladen ist!")
+        logger.warning("Keine WebSocket URL verfügbar (League Client nicht gefunden)")
+        logger.warning("Stelle sicher, dass der League Client läuft und vollständig geladen ist!")
         return False
     
     headers = get_websocket_headers()
@@ -239,9 +234,8 @@ def connect_to_league_client_websocket(event_callback: Callable[[Dict], None]) -
             for k, v in headers.items():
                 ws_headers.append(f"{k}: {v}")
         
-        print(f"[WEBSOCKET] Verbinde zu {websocket_url}")
-        if __debug__:
-            print(f"[WEBSOCKET] Headers: {ws_headers}")
+        logger.info("Verbinde zu %s", websocket_url)
+        logger.debug("Headers: %s", ws_headers)
         
         ws = websocket.WebSocketApp(
             websocket_url,
@@ -268,8 +262,7 @@ def connect_to_league_client_websocket(event_callback: Callable[[Dict], None]) -
         return _is_connected
         
     except Exception as e:
-        if __debug__:
-            print(f"[WEBSOCKET] Fehler beim Verbinden: {e}")
+        logger.debug("Fehler beim Verbinden: %s", e)
         return False
 
 
