@@ -1583,20 +1583,50 @@ def _get_locked_picks_signature(draft_data: dict) -> tuple:
     return (team1_locked, team2_locked, team1_bans, team2_bans)
 
 
-def _has_draft_changed(new_draft: dict) -> bool:
+def _get_hover_signature(draft_data: dict) -> tuple:
+    """
+    Erstellt eine Signatur der Hover-Picks für Champion Select Updates.
+    Hovers sind Champions mit championId == 0 (nicht gelocked) aber
+    championPickIntent > 0, oder Picks die noch nicht gelocked sind
+    (championId > 0 ohne isLocked).
+    """
+    if not draft_data:
+        return ()
+
+    team1_hovers = tuple(
+        p.get('championId', 0) or p.get('hoverChampionId', 0)
+        for p in draft_data.get('team1_picks', [])
+        if not p.get('isLocked') and (p.get('championId', 0) > 0 or p.get('hoverChampionId', 0) > 0)
+    )
+    team2_hovers = tuple(
+        p.get('championId', 0) or p.get('hoverChampionId', 0)
+        for p in draft_data.get('team2_picks', [])
+        if not p.get('isLocked') and (p.get('championId', 0) > 0 or p.get('hoverChampionId', 0) > 0)
+    )
+    return (team1_hovers, team2_hovers)
+
+
+def _has_draft_changed(new_draft: dict) -> tuple:
     """
     Prüft ob sich der Draft tatsächlich geändert hat.
-    Vergleicht nur locked picks und bans, nicht hovers.
+    Returns: (picks_changed: bool, hover_changed: bool)
+    picks_changed: locked picks oder bans haben sich geändert
+    hover_changed: hover-state hat sich geändert (für reduziertes Gewicht)
     """
     global _last_draft_state
-    
+
     if _last_draft_state is None:
-        return True
-    
-    new_sig = _get_locked_picks_signature(new_draft)
-    old_sig = _get_locked_picks_signature(_last_draft_state)
-    
-    return new_sig != old_sig
+        return (True, False)
+
+    new_locked = _get_locked_picks_signature(new_draft)
+    old_locked = _get_locked_picks_signature(_last_draft_state)
+    picks_changed = new_locked != old_locked
+
+    new_hover = _get_hover_signature(new_draft)
+    old_hover = _get_hover_signature(_last_draft_state)
+    hover_changed = new_hover != old_hover
+
+    return (picks_changed, hover_changed)
 
 
 def handle_draft_event(event_data):
@@ -1639,20 +1669,24 @@ def handle_draft_event(event_data):
                 # Extrahiere Draft-Daten
                 draft_data = get_draft_picks_bans()
                 if draft_data:
-                    # Prüfe ob sich etwas geändert hat
-                    if not _has_draft_changed(draft_data):
+                    # Prüfe ob sich etwas geändert hat (Picks/Bans oder Hovers)
+                    picks_changed, hover_changed = _has_draft_changed(draft_data)
+                    if not picks_changed and not hover_changed:
                         # Keine Änderung - kein Update senden
                         return
-                    
+
+                    if hover_changed and not picks_changed:
+                        logger.debug("Hover-Änderung erkannt (kein Lock)")
+
                     # Änderung erkannt - Update senden
                     team1_picks = draft_data.get('team1_picks', [])
                     team2_picks = draft_data.get('team2_picks', [])
-                    
+
                     # Zähle locked picks für Logging
                     team1_locked = sum(1 for p in team1_picks if p.get('isLocked'))
                     team2_locked = sum(1 for p in team2_picks if p.get('isLocked'))
                     logger.info("Draft-Änderung erkannt: Team1=%d locked, Team2=%d locked", team1_locked, team2_locked)
-                    
+
                     # Bestimme myTeam basierend auf localPlayerCellId
                     # cellIds 0-4 = Blue Side (team1), cellIds 5-9 = Red Side (team2)
                     session = draft_data.get('session')
@@ -1663,28 +1697,31 @@ def handle_draft_event(event_data):
                             logger.info("Team-Erkennung: localPlayerCellId=%s -> myTeam=%s (%s Side)", local_cell_id, draft_data['myTeam'], 'Blue' if draft_data['myTeam'] == 0 else 'Red')
                         elif 'myTeam' not in draft_data:
                             draft_data['myTeam'] = 0  # Fallback
-                        
+
                         # Ermittle myRole aus Session
                         my_role = get_current_role(session)
                         draft_data['myRole'] = my_role
                         logger.info("Rolle des lokalen Spielers: %s", my_role)
                     elif 'myTeam' not in draft_data:
                         draft_data['myTeam'] = 0  # Fallback wenn keine Session
-                    
+
                     # Speichere neuen State
                     _last_draft_state = draft_data
-                    
+
                     # Sende an alle verbundenen Clients (in separatem Thread)
+                    # isHover flag: True wenn nur Hover geändert, nicht Picks/Bans
+                    is_hover = hover_changed and not picks_changed
                     def send_update():
                         try:
                             socketio.emit('draft_update', {
                                 'success': True,
-                                'draft': draft_data
+                                'draft': draft_data,
+                                'isHover': is_hover
                             })
                             logger.info("Draft-Update an Frontend gesendet")
                         except Exception as e:
                             logger.error("Fehler beim Senden des Updates: %s", e)
-                    
+
                     threading.Thread(target=send_update, daemon=True).start()
     except Exception as e:
         logger.error("Fehler beim Verarbeiten des Draft-Events: %s", e)
