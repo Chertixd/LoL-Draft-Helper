@@ -394,6 +394,43 @@ def warm_cache() -> None:
             results[t] = fut.result()  # propagates CDNError on failure
     with _data_lock:
         _data.update(results)
+
+
+def preload_latest_patch_shards() -> None:
+    """Background preload for the latest patch's matchups + synergies shards.
+
+    Called AFTER ready-file is written (non-blocking) so the webview opens
+    instantly while the ~50 MB matchups + ~40 MB synergies shards download
+    in the background. Once this finishes, the user's first pick recommendation
+    is served from memory (~30 ms) instead of triggering a cold CDN fetch
+    (~1.8 s for matchups).
+
+    Idempotent: if the latest patch is already cached in ``_data``, the
+    conditional-GET returns 304 and this is a no-op. Exceptions are logged
+    but never raised — this is opportunistic, not load-bearing.
+    """
+    try:
+        latest = _get_latest_patch()
+    except Exception:
+        logger.warning("[json_repo] preload skipped; could not resolve latest patch")
+        return
+    with ThreadPoolExecutor(max_workers=_FAN_OUT_MAX_WORKERS) as ex:
+        futures = {
+            ex.submit(_fetch_one, tbl, latest): tbl
+            for tbl in PER_PATCH_TABLES
+        }
+        for fut in as_completed(futures):
+            tbl = futures[fut]
+            try:
+                fut.result()
+                logger.info(
+                    "[json_repo] preload complete for %s_%s", tbl, latest
+                )
+            except Exception as exc:
+                logger.warning(
+                    "[json_repo] preload failed for %s_%s: %s",
+                    tbl, latest, exc
+                )
     logger.info(
         "[json_repo] warm_cache complete; %d tables loaded (per-patch "
         "tables %s fetched lazily)",

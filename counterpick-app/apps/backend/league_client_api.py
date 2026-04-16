@@ -195,18 +195,29 @@ def get_champion_name_by_id(champion_id: int) -> str:
 
 def is_league_client_running() -> bool:
     """
-    Prüft ob der League Client läuft und erreichbar ist
+    Prüft ob der League Client läuft und erreichbar ist.
+
+    Nutzt /lol-gameflow/v1/gameflow-phase statt /session — phase gibt immer
+    200 zurück solange der Client erreichbar ist (mit "None", "Lobby",
+    "ChampSelect", "InProgress" etc.), während /session 404 gibt wenn keine
+    Game-Session läuft (z.B. in der Lobby). Ein 404 ist also KEIN Signal
+    dass der Client offline ist — es heißt nur dass aktuell kein Spiel
+    aktiv ist. Connection-/Timeout-Fehler sind die echten "nicht running"
+    Signale.
     """
     try:
         base_url = get_client_base_url()
         headers = get_auth_headers()
         response = requests.get(
-            f"{base_url}/lol-gameflow/v1/session",
+            f"{base_url}/lol-gameflow/v1/gameflow-phase",
             verify=False,
             timeout=LEAGUE_CLIENT_TIMEOUT,
             headers=headers
         )
-        return response.status_code == 200
+        # 2xx = Client läuft und antwortet (auch wenn keine Session aktiv).
+        # 4xx ohne Auth hiesse Token falsch — immer noch "Client läuft".
+        # Nur ConnectionError/Timeout = Client nicht erreichbar.
+        return response.status_code < 500
     except (requests.exceptions.RequestException, requests.exceptions.Timeout):
         return False
 

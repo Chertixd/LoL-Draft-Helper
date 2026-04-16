@@ -21,6 +21,7 @@ from lolalytics_api.json_repo import (
     get_matchups as sb_get_matchups,
     get_synergies as sb_get_synergies,
     warm_cache as _json_repo_warm_cache,
+    preload_latest_patch_shards as _json_repo_preload_latest_patch_shards,
     stale_status as _json_repo_stale_status,
     CDNError as _json_repo_CDNError,
     _table as _json_repo_table,
@@ -2108,6 +2109,20 @@ def main() -> None:
         daemon=True,
     )
     probe.start()
+
+    # Perf: preload the latest patch's matchups + synergies shards in the
+    # background so the user's first pick recommendation is served from memory
+    # (~30 ms) instead of a cold CDN fetch (~1.8 s for the 47 MB matchups file).
+    # Non-blocking — ready-file is already written above, webview is visible,
+    # and the preload runs while the user navigates to champion select. If the
+    # user picks before this thread finishes, the normal lazy fetch path kicks
+    # in — same behavior as before this optimization.
+    preload = threading.Thread(
+        target=_json_repo_preload_latest_patch_shards,
+        name="cdn-preload",
+        daemon=True,
+    )
+    preload.start()
 
     # Startup banner — logged at INFO so it appears in the log file
     # as well as on the console (StreamHandler added below in dev mode).
