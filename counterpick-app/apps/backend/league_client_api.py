@@ -123,23 +123,25 @@ def get_auth_headers() -> Dict[str, str]:
 def _load_champion_id_map() -> Dict[int, str]:
     """
     Lädt Champion-ID zu Name Mapping.
-    Primäre Quelle: Supabase (zuverlässiger und aktueller)
-    Fallback: Data Dragon (lokal)
+    Primäre Quelle: json_repo (CDN-backed, funktioniert auch im PyInstaller-Bundle)
+    Fallback: Data Dragon (lokal, nur im Dev-Setup verfügbar)
     """
     global _champion_id_map
-    
-    if _champion_id_map is not None:
+
+    # Cache only once populated. A prior call during json_repo warm_cache
+    # could return {} before the champions table is resolved; caching
+    # that empty dict would permanently poison the lookup.
+    if _champion_id_map:
         return _champion_id_map
-    
+
     _champion_id_map = {}
-    
-    # 1. Versuche zuerst Supabase (zuverlässiger)
+
+    # 1. json_repo (CDN) — einzige Quelle die im gepackten Client verfügbar ist
     try:
-        from lolalytics_api.supabase_repo import _champion_map
+        from lolalytics_api.json_repo import _champion_map
         maps = _champion_map()
         key_to_name = maps.get("key_to_name", {})
-        
-        # Konvertiere key (String) zu id (int) -> name Mapping
+
         for key_str, name in key_to_name.items():
             try:
                 champ_id = int(key_str)
@@ -147,12 +149,12 @@ def _load_champion_id_map() -> Dict[int, str]:
                     _champion_id_map[champ_id] = name
             except (ValueError, TypeError):
                 continue
-        
+
         if _champion_id_map:
-            logger.info("Champion-Mapping aus Supabase geladen: %d Champions", len(_champion_id_map))
+            logger.info("Champion-Mapping aus json_repo geladen: %d Champions", len(_champion_id_map))
             return _champion_id_map
     except Exception as e:
-        logger.info("Supabase-Mapping fehlgeschlagen, nutze Dragontail-Fallback: %s", e)
+        logger.info("json_repo-Mapping fehlgeschlagen, nutze Dragontail-Fallback: %s", e)
     
     # 2. Fallback: Data Dragon lokal (dragontail-15.24.1)
     base_path = Path(__file__).parent.parent

@@ -29,6 +29,10 @@ const leagueClientStatus = computed(() => {
 
 /** Handle transition when CDN download finishes */
 async function onCdnReady() {
+    // Re-fetch patches after warm-up: the initial loadPatches() during
+    // warming raced the json_repo cache fill and left the store with
+    // either hardcoded init values or an empty list.
+    settingsStore.loadPatches();
     try {
         const lcStatus = await getLeagueClientStatus();
         if (lcStatus.client_running) {
