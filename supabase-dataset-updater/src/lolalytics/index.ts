@@ -15,23 +15,17 @@ export async function getChampionDataFromLolalytics(
     version: string,
     champion: RiotChampion
 ) {
-    const [championData, champion2Data] = await Promise.all([
-        getLolalyticsQwikChampion(version, champion.id),
-        getLolalyticsQwikChampion2(version, champion.id),
-    ]);
-
-    // If data is not available, throw
-    if (!championData.skill6) {
-        return undefined;
-        //throw new Error("No data available for this champion and patch");
-    }
-
-    const mainRole = championData.header.lane as LolalyticsRole;
-    const remainingRoles = LOLALYTICS_ROLES.filter(
-        (role) => role !== championData.header.lane
-    );
-
-    const rolePromises = remainingRoles.map((role) =>
+    // Fan out to ALL five lanes explicitly. The previous version did one
+    // un-laned request first and trusted `header.lane` to identify the
+    // "main" role, but Lolalytics's default-lane heuristic occasionally
+    // points at a lane the champion barely plays — when that happened
+    // the dominant lane (e.g. Nautilus support) silently went through
+    // the no-data branch on the next pass and never had its matchups
+    // / synergies persisted, even though the data exists upstream.
+    // Always asking for `?lane=<role>` for every role gives a
+    // deterministic 5-row matrix per champion and lets `header.n === 0`
+    // be the only signal we need for "this lane has no games."
+    const rolePromises = LOLALYTICS_ROLES.map((role) =>
         Promise.all([
             getLolalyticsQwikChampion(version, champion.id, role),
             getLolalyticsQwikChampion2(version, champion.id, role),
@@ -39,19 +33,31 @@ export async function getChampionDataFromLolalytics(
     );
     const roleDataResults = await Promise.allSettled(rolePromises);
 
-    let roleData = roleDataResults.map((result, i) => {
-        if (result.status === "fulfilled") {
-            return [remainingRoles[i], result.value] as const;
-        }
+    // If every role fetch failed or returned an empty payload, the
+    // champion isn't on this patch yet. Mirror the previous skill6
+    // null-check semantics so the upsert loop in supabase-etl.ts gets
+    // the same `undefined` it knows how to skip.
+    const hasAnyUsableRole = roleDataResults.some(
+        (r) =>
+            r.status === "fulfilled" &&
+            r.value[0]?.skill6 != null &&
+            r.value[0].header.n > 0
+    );
+    if (!hasAnyUsableRole) {
+        return undefined;
+    }
 
+    const roleData = roleDataResults.map((result, i) => {
+        const role = LOLALYTICS_ROLES[i];
+        if (result.status === "fulfilled") {
+            return [role, result.value] as const;
+        }
         console.log(
-            `No data for ${champion.id} in role ${remainingRoles[i]}`,
+            `No data for ${champion.id} in role ${role}`,
             result.reason
         );
-
-        return [remainingRoles[i], undefined] as const;
+        return [role, undefined] as const;
     });
-    roleData = [[mainRole, [championData, champion2Data]], ...roleData];
 
     const model: ChampionData = {
         ...champion,
