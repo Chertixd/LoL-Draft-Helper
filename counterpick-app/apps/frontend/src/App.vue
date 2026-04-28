@@ -51,79 +51,97 @@ function onLolConnected() {
 }
 
 onMounted(async () => {
-    // Initialize Tauri event listeners (backend-ready, backend-disconnected)
-    await initBackendListeners();
-
-    // Check for updates after backend is ready (2s delay for sidecar startup)
+    // Defer the updater check; never let it gate the rest of mount.
     setTimeout(() => {
         checkForUpdates();
     }, 2000);
 
-    // Set up backend-disconnected handler for Tauri
-    if ('__TAURI__' in window) {
-        const { listen } = await import('@tauri-apps/api/event');
-        await listen('backend-disconnected', () => {
-            appStatus.setDisconnected();
-            backendStatus.value = 'offline';
-        });
-    }
-
+    // Single try/finally around the whole sequence. The earlier version
+    // ran `initBackendListeners()` and the `__TAURI__` listen() block
+    // BEFORE entering the try, so any failure in those (Tauri IPC not
+    // yet ready, plugin load race) left `backendStatus` stuck on
+    // 'checking' forever — exactly the "Backend: Checking…" footer
+    // freeze we hit in the field. The finally guarantees the footer
+    // resolves to a real state and that loadPatches always fires once,
+    // even when the health probe itself throws.
+    let isWarming = false;
     try {
+        await initBackendListeners();
+
+        if ('__TAURI__' in window) {
+            const { listen } = await import('@tauri-apps/api/event');
+            await listen('backend-disconnected', () => {
+                appStatus.setDisconnected();
+                backendStatus.value = 'offline';
+            });
+        }
+
         const response = await checkBackendHealth();
-        if (response.status === 'ok') {
-            backendStatus.value = 'online';
-            appStatus.setConnected();
-
-            // Check cache staleness from health response
-            const cached = (response as Record<string, unknown>).cached;
-            if (cached && typeof cached === 'object') {
-                const entries = Object.values(cached as Record<string, unknown>);
-                // stale_status returns Dict[str, bool] -- count stale vs total
-                const staleCount = entries.filter(v => v === true).length;
-                // Estimate age: if any table is stale, mark > 48h as a heuristic
-                const oldestHours = staleCount > 0 ? 72 : 0;
-                appStatus.updateCacheStatus({
-                    oldest_fetch_hours: oldestHours,
-                    newest_fetch_iso: null,
-                });
-            }
-
-            // Check status endpoint for CDN warm-up phase
-            try {
-                const { getBackendURL } = await import('@/api/client');
-                const statusResp = await fetch(
-                    (await getBackendURL()) + '/api/status'
-                );
-                if (statusResp.ok) {
-                    const statusData = await statusResp.json();
-                    if (statusData.phase === 'warming') {
-                        appStatus.setLoading(statusData.done ?? 0, statusData.total ?? 9);
-                        // CdnProgressView will take over polling
-                        settingsStore.loadPatches();
-                        return;
-                    }
-                }
-            } catch {
-                // /api/status not reachable; proceed to LoL check
-            }
-
-            // Check League Client status
-            const lcStatus = await getLeagueClientStatus();
-            if (lcStatus.client_running) {
-                appStatus.setRunning();
-            } else {
-                appStatus.setWaitingForLol();
-            }
-        } else {
+        if (response.status !== 'ok') {
             backendStatus.value = 'offline';
             appStatus.setDisconnected();
+            return;
+        }
+
+        backendStatus.value = 'online';
+        appStatus.setConnected();
+
+        // Check cache staleness from health response
+        const cached = (response as Record<string, unknown>).cached;
+        if (cached && typeof cached === 'object') {
+            const entries = Object.values(cached as Record<string, unknown>);
+            // stale_status returns Dict[str, bool] -- count stale vs total
+            const staleCount = entries.filter(v => v === true).length;
+            // Estimate age: if any table is stale, mark > 48h as a heuristic
+            const oldestHours = staleCount > 0 ? 72 : 0;
+            appStatus.updateCacheStatus({
+                oldest_fetch_hours: oldestHours,
+                newest_fetch_iso: null,
+            });
+        }
+
+        // Check status endpoint for CDN warm-up phase
+        try {
+            const { getBackendURL } = await import('@/api/client');
+            const statusResp = await fetch(
+                (await getBackendURL()) + '/api/status'
+            );
+            if (statusResp.ok) {
+                const statusData = await statusResp.json();
+                if (statusData.phase === 'warming') {
+                    appStatus.setLoading(statusData.done ?? 0, statusData.total ?? 9);
+                    isWarming = true;
+                    // CdnProgressView takes over polling; the finally below
+                    // still fires loadPatches() for consistency.
+                    return;
+                }
+            }
+        } catch {
+            // /api/status not reachable; proceed to LoL check
+        }
+
+        // Check League Client status
+        const lcStatus = await getLeagueClientStatus();
+        if (lcStatus.client_running) {
+            appStatus.setRunning();
+        } else {
+            appStatus.setWaitingForLol();
         }
     } catch {
         backendStatus.value = 'offline';
         appStatus.setDisconnected();
+    } finally {
+        // Always trigger patch load. settingsStore.loadPatches has its
+        // own in-flight guard so multiple invocations during the warmup
+        // → ready transition coalesce safely.
+        settingsStore.loadPatches();
+        // If we never reached one of the explicit branches that flips
+        // backendStatus, force it to a deterministic value so the
+        // footer never stays on "Checking…".
+        if (backendStatus.value === 'checking') {
+            backendStatus.value = isWarming ? 'online' : 'offline';
+        }
     }
-
-    settingsStore.loadPatches();
 });
 </script>
 
