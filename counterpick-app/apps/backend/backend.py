@@ -56,19 +56,6 @@ from lolalytics_api.resources import (
     user_log_dir,
 )
 
-# Import für Error Handling
-try:
-    import httpcore
-    HTTPCORE_AVAILABLE = True
-except ImportError:
-    HTTPCORE_AVAILABLE = False
-
-try:
-    import httpx
-    HTTPX_AVAILABLE = True
-except ImportError:
-    HTTPX_AVAILABLE = False
-
 class LCUAuthFilter(logging.Filter):
     """Redacts LCU auth tokens from log records at write-time (LOG-05, D-13).
 
@@ -1425,35 +1412,21 @@ def get_recommendations():
                 is_blind_pick=is_blind_pick
             )
         except Exception as db_error:
-            # Fange spezifische DB-Verbindungsfehler ab
+            # Generischer Connection-Loss-Pfad — wir brauchen keine httpcore/httpx-
+            # Sonderbehandlung mehr, da der Runtime-Pfad ausschließlich `requests`
+            # über json_repo geht (Supabase + httpx liegen außerhalb des Bundles
+            # und sind aus backend.spec excludes).
             error_type = type(db_error).__name__
             error_msg = str(db_error)
-            
-            # Prüfe auf RemoteProtocolError (Server disconnected)
-            if HTTPCORE_AVAILABLE and isinstance(db_error, httpcore.RemoteProtocolError):
-                logger.error("Database connection error (httpcore.RemoteProtocolError): %s", error_msg)
-                return jsonify({
-                    'success': False,
-                    'error': 'Database connection lost. Please try again.',
-                    'error_type': 'RemoteProtocolError'
-                }), 503  # Service Unavailable
-            elif HTTPX_AVAILABLE and isinstance(db_error, httpx.RemoteProtocolError):
-                logger.error("Database connection error (httpx.RemoteProtocolError): %s", error_msg)
-                return jsonify({
-                    'success': False,
-                    'error': 'Database connection lost. Please try again.',
-                    'error_type': 'RemoteProtocolError'
-                }), 503
-            elif 'Server disconnected' in error_msg or 'RemoteProtocolError' in error_type:
+
+            if 'Server disconnected' in error_msg or 'RemoteProtocolError' in error_type:
                 logger.error("Database connection error: %s", error_msg)
                 return jsonify({
                     'success': False,
                     'error': 'Database connection lost. Please try again.',
-                    'error_type': error_type
+                    'error_type': error_type,
                 }), 503
-            else:
-                # Andere Fehler weiterwerfen für allgemeines Error Handling
-                raise
+            raise
         
         # Gebe Ergebnis zurück
         if result.get('success'):
