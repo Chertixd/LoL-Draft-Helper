@@ -6,6 +6,7 @@ Komplette Überarbeitung für Season 16:
 - Synergy-First Logic für Support
 """
 
+import logging
 import math
 import json
 from typing import Dict, List, Optional, Any
@@ -28,6 +29,8 @@ from recommendation_config import (
     ENEMY_IMPORTANCE, 
     TEAMMATE_IMPORTANCE
 )
+
+logger = logging.getLogger(__name__)
 
 # --- HELPER FUNCTIONS ---
 
@@ -142,9 +145,9 @@ def get_recommendations(
     is_blind_pick: bool = False
 ) -> Dict[str, Any]:
     try:
-        print(f"[RECOMMENDATIONS] Request erhalten: role={my_role}, myTeam={len(my_team)}, enemyTeam={len(enemy_team)}, isBlindPick={is_blind_pick}")
-        print(f"[RECOMMENDATIONS] myTeam Details: {my_team}")
-        print(f"[RECOMMENDATIONS] enemyTeam Details: {enemy_team}")
+        logger.info(f"[RECOMMENDATIONS] Request erhalten: role={my_role}, myTeam={len(my_team)}, enemyTeam={len(enemy_team)}, isBlindPick={is_blind_pick}")
+        logger.info(f"[RECOMMENDATIONS] myTeam Details: {my_team}")
+        logger.info(f"[RECOMMENDATIONS] enemyTeam Details: {enemy_team}")
         
         # 1. SETUP & MAPPING
         champion_maps = _champion_map()
@@ -209,7 +212,7 @@ def get_recommendations(
         # Wir sind im Blind Pick, wenn kein Gegner auf der Lane ist ODER explizit Blind Pick Modus an ist
         is_actually_blind_pick = is_blind_pick or (enemy_in_lane is None)
         
-        print(f"[RECO] Role: {my_role} | Blind Pick Mode: {is_actually_blind_pick} (Enemy in lane: {enemy_in_lane is not None})")
+        logger.info(f"[RECO] Role: {my_role} | Blind Pick Mode: {is_actually_blind_pick} (Enemy in lane: {enemy_in_lane is not None})")
 
         # GEWICHTUNGEN ANPASSEN
         base_weights = ROLE_SCORE_WEIGHTS.get(my_role, DEFAULT_SCORE_WEIGHTS).copy()
@@ -227,7 +230,7 @@ def get_recommendations(
             for k in base_weights:
                 base_weights[k] /= total_w
                 
-            print(f"[RECO] Applied Blind Pick Weights: {base_weights}")
+            logger.info(f"[RECO] Applied Blind Pick Weights: {base_weights}")
         
         weights = base_weights
 
@@ -238,9 +241,9 @@ def get_recommendations(
             and row.get('role') in my_db_roles
             and (row.get('games') or 0) > 50
         ]
-        print(f"[RECOMMENDATIONS] Kandidaten aus DB geladen: {len(candidates)} für Rollen {my_db_roles}")
+        logger.info(f"[RECOMMENDATIONS] Kandidaten aus DB geladen: {len(candidates)} für Rollen {my_db_roles}")
         if not candidates:
-            print(f"[RECOMMENDATIONS] Keine Kandidaten gefunden für Rolle {my_role}, patch {patch}")
+            logger.warning(f"[RECOMMENDATIONS] Keine Kandidaten gefunden für Rolle {my_role}, patch {patch}")
             return {'success': False, 'recommendations': [], 'error': 'No candidates found', 'patch': patch}
 
         # Global Pickrate Calc
@@ -292,13 +295,13 @@ def get_recommendations(
             for mate in my_team_ids:
                 mate_id = mate['id']
                 if mate_id is None:
-                    print(f"[SYNERGY DEBUG] WARNUNG: Teammate hat keine gültige ID: {mate}")
+                    logger.debug(f"[SYNERGY DEBUG] WARNUNG: Teammate hat keine gültige ID: {mate}")
                     continue
                     
                 mate_role = normalize_role(mate['role'])
                 mate_db_roles = db_role_variants.get(mate_role, [mate_role])
                 
-                print(f"[SYNERGY DEBUG] Lade Base-Stats für Teammate: ID={mate_id}, Role={mate_role}, DB-Roles={mate_db_roles}")
+                logger.debug(f"[SYNERGY DEBUG] Lade Base-Stats für Teammate: ID={mate_id}, Role={mate_role}, DB-Roles={mate_db_roles}")
                 mate_stats_data = [
                     row for row in _table('champion_stats')
                     if row.get('patch') == patch
@@ -314,9 +317,9 @@ def get_recommendations(
                         'wins': mate_stat.get('wins', 0),
                         'games': mate_stat.get('games', 0)
                     }
-                    print(f"[SYNERGY DEBUG] Teammate {mate_id} ({mate_role}): Base Stats geladen - {mate_stat.get('wins', 0)}/{mate_stat.get('games', 0)}")
+                    logger.debug(f"[SYNERGY DEBUG] Teammate {mate_id} ({mate_role}): Base Stats geladen - {mate_stat.get('wins', 0)}/{mate_stat.get('games', 0)}")
                 else:
-                    print(f"[SYNERGY DEBUG] WARNUNG: Keine Base-Stats gefunden für Teammate {mate_id} ({mate_role}) - Query: patch={patch}, champion_key={str(mate_id)}, roles={mate_db_roles}")
+                    logger.debug(f"[SYNERGY DEBUG] WARNUNG: Keine Base-Stats gefunden für Teammate {mate_id} ({mate_role}) - Query: patch={patch}, champion_key={str(mate_id)}, roles={mate_db_roles}")
 
         # Aggregation für Specialist-Check
         enemy_total_games = {} 
@@ -341,7 +344,7 @@ def get_recommendations(
 
             if j_rows:
                 my_jungler_pacing = analyze_pacing(j_rows[0].get('stats_by_time'))
-                print(f"[PACING] My Jungler is Early: {my_jungler_pacing['is_early']}, Scaling: {my_jungler_pacing['is_scaling']}")
+                logger.info(f"[PACING] My Jungler is Early: {my_jungler_pacing['is_early']}, Scaling: {my_jungler_pacing['is_scaling']}")
 
         # 4. SCORE BERECHNUNG
         recommendations = []
@@ -417,14 +420,14 @@ def get_recommendations(
                 # Filtere nach Rolle des empfohlenen Champions (nur Synergien für die aktuelle Rolle)
                 s_role = normalize_role(s.get('role', ''))
                 if s_role not in my_db_roles:
-                    print(f"[SYNERGY DEBUG] Champion {c_id} + Teammate {s_mate_id}: Synergie gefiltert - Champion-Rolle '{s_role}' nicht in {my_db_roles}")
+                    logger.debug(f"[SYNERGY DEBUG] Champion {c_id} + Teammate {s_mate_id}: Synergie gefiltert - Champion-Rolle '{s_role}' nicht in {my_db_roles}")
                     continue
                 
                 # Filtere nach Rolle des Teammates (strikte Rollen-Matching)
                 s_mate_role = normalize_role(s.get('mate_role', ''))
                 mate_role_normalized = normalize_role(mate_data['role'])
                 if s_mate_role != mate_role_normalized:
-                    print(f"[SYNERGY DEBUG] Champion {c_id} + Teammate {s_mate_id}: Synergie gefiltert - Teammate-Rolle '{s_mate_role}' passt nicht zu erwarteter Rolle '{mate_role_normalized}' (Games={s['games']})")
+                    logger.debug(f"[SYNERGY DEBUG] Champion {c_id} + Teammate {s_mate_id}: Synergie gefiltert - Teammate-Rolle '{s_mate_role}' passt nicht zu erwarteter Rolle '{mate_role_normalized}' (Games={s['games']})")
                     continue
                 
                 # Berechne Score für diese Synergie
@@ -458,7 +461,7 @@ def get_recommendations(
                 synergy_list.sort(key=lambda x: x['games'], reverse=True)
                 best_synergy = synergy_list[0]
                 best_synergies_by_mate[s_mate_id] = best_synergy
-                print(f"[SYNERGY DEBUG] Champion {c_id} + Teammate {s_mate_id}: {len(synergy_list)} passende Synergien gefunden, gewählt: Games={best_synergy['games']} (Rolle: {normalize_role(best_synergy['synergy'].get('role', ''))} + {normalize_role(best_synergy['synergy'].get('mate_role', ''))})")
+                logger.debug(f"[SYNERGY DEBUG] Champion {c_id} + Teammate {s_mate_id}: {len(synergy_list)} passende Synergien gefunden, gewählt: Games={best_synergy['games']} (Rolle: {normalize_role(best_synergy['synergy'].get('role', ''))} + {normalize_role(best_synergy['synergy'].get('mate_role', ''))})")
             
             # Verarbeite die besten Synergien pro Teammate
             for s_mate_id, best_synergy in best_synergies_by_mate.items():
@@ -480,22 +483,22 @@ def get_recommendations(
                 if mate_base and mate_base['games'] > 0:
                     mate_base_wr_safe = wilson_score(mate_base['wins'], mate_base['games'], z=CONFIDENCE_Z['base'])
                     s_wr_safe = wilson_score(s['wins'], s['games'], z=synergy_z)
-                    print(f"[SYNERGY DEBUG] Champion {c_id} + Teammate {s_mate_id}: BESTE Synergie (gewählt nach Games-Priorisierung) - Games={s['games']}, Z={synergy_z:.2f}, Raw-WR={raw_wr:.4f}, Safe-WR={s_wr_safe:.4f}, Mate-Base-WR={mate_base_wr_safe:.4f}, Delta={delta:.4f}, Score={s_score:.2f}")
+                    logger.debug(f"[SYNERGY DEBUG] Champion {c_id} + Teammate {s_mate_id}: BESTE Synergie (gewählt nach Games-Priorisierung) - Games={s['games']}, Z={synergy_z:.2f}, Raw-WR={raw_wr:.4f}, Safe-WR={s_wr_safe:.4f}, Mate-Base-WR={mate_base_wr_safe:.4f}, Delta={delta:.4f}, Score={s_score:.2f}")
                 else:
                     s_wr_safe = wilson_score(s['wins'], s['games'], z=synergy_z)
-                    print(f"[SYNERGY DEBUG] WARNUNG: Champion {c_id} + Teammate {s_mate_id}: BESTE Synergie - Games={s['games']}, Z={synergy_z:.2f}, Raw-WR={raw_wr:.4f}, Safe-WR={s_wr_safe:.4f}, Keine Base-Stats für Teammate, verwende Fallback (Delta={delta:.4f}, Score={s_score:.2f})")
+                    logger.debug(f"[SYNERGY DEBUG] WARNUNG: Champion {c_id} + Teammate {s_mate_id}: BESTE Synergie - Games={s['games']}, Z={synergy_z:.2f}, Raw-WR={raw_wr:.4f}, Safe-WR={s_wr_safe:.4f}, Keine Base-Stats für Teammate, verwende Fallback (Delta={delta:.4f}, Score={s_score:.2f})")
                 
-                print(f"[SYNERGY DEBUG] Champion {c_id} + Teammate {s_mate_id}: Score={s_score:.2f}, Importance={imp:.2f}, Gewichteter Wert={s_score * imp:.2f}")
+                logger.debug(f"[SYNERGY DEBUG] Champion {c_id} + Teammate {s_mate_id}: Score={s_score:.2f}, Importance={imp:.2f}, Gewichteter Wert={s_score * imp:.2f}")
                 
                 synergy_values.append(s_score * imp)
                 total_imp_synergy += imp
 
             if total_imp_synergy > 0:
                 norm_synergy_score = sum(synergy_values) / total_imp_synergy
-                print(f"[SYNERGY DEBUG] Champion {c_id}: Final Synergy Score = {norm_synergy_score:.2f} (Total Importance: {total_imp_synergy:.2f}, Summe gewichteter Werte: {sum(synergy_values):.2f})")
+                logger.debug(f"[SYNERGY DEBUG] Champion {c_id}: Final Synergy Score = {norm_synergy_score:.2f} (Total Importance: {total_imp_synergy:.2f}, Summe gewichteter Werte: {sum(synergy_values):.2f})")
             else:
                 norm_synergy_score = 50.0
-                print(f"[SYNERGY DEBUG] Champion {c_id}: Keine Synergien gefunden, Score = 50.0 (neutral)")
+                logger.debug(f"[SYNERGY DEBUG] Champion {c_id}: Keine Synergien gefunden, Score = 50.0 (neutral)")
 
             # --- D. PACING PENALTY & BONUS (Season 16 Logic) ---
             pacing_mod = 0
@@ -602,7 +605,7 @@ def get_recommendations(
                             matching_stat = stat
                 
                 if not matching_stat:
-                    print(f"[PICK-SCORE] Warnung: Keine Stats für {c_name} (ID: {c_id}, Rolle: {pick_role})")
+                    logger.warning(f"[PICK-SCORE] Warnung: Keine Stats für {c_name} (ID: {c_id}, Rolle: {pick_role})")
                     continue
                 
                 # --- A. BASE SCORE (0-100) --- (GLEICH wie Recommendations)
@@ -736,9 +739,9 @@ def get_recommendations(
                     'winrate': round(base_wr_safe * 100, 1)
                 }
         
-        print(f"[RECOMMENDATIONS] {len(recommendations)} Kandidaten bewertet, Top 15 zurückgegeben")
+        logger.info(f"[RECOMMENDATIONS] {len(recommendations)} Kandidaten bewertet, Top 15 zurückgegeben")
         if recommendations:
-            print(f"[RECOMMENDATIONS] Top 3: {[(r['championKey'], r['score']) for r in recommendations[:3]]}")
+            logger.info(f"[RECOMMENDATIONS] Top 3: {[(r['championKey'], r['score']) for r in recommendations[:3]]}")
         
         return {
             'success': True, 
@@ -748,7 +751,5 @@ def get_recommendations(
         }
 
     except Exception as e:
-        print(f"[RECOMMENDATIONS ERROR] {e}")
-        import traceback
-        traceback.print_exc()
+        logger.exception(f"[RECOMMENDATIONS ERROR] {e}")
         return {'success': False, 'error': str(e), 'recommendations': [], 'pickScores': {}}
