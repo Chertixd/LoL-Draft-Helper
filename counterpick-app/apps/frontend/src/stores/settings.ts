@@ -12,8 +12,12 @@ export const useSettingsStore = defineStore('settings', () => {
     const selectedPatch = ref<string>('');  // Leer = aktueller Patch
     const selectedRole = ref<string>('');   // Leer = Auto
 
-    // Patch-Optionen (werden dynamisch aktualisiert)
-    const patchOptions = ref<string[]>(['15.24', '15.23', '15.22']);
+    // Patch-Optionen (werden dynamisch aktualisiert).
+    // Start leer — bis `/api/patches` antwortet, lassen Aufrufer `currentPatch=''`
+    // an die API durchreichen, das Backend wählt dann den neuesten Patch. So
+    // verhindert man die Race-Condition, in der frühe Requests einen seit
+    // Monaten ausgemusterten Patch anfordern und 500/Null-Daten bekommen.
+    const patchOptions = ref<string[]>([]);
     const patchesLoading = ref(false);
 
     // Computed: Gibt selectedPatch zurück, oder den neuesten Patch wenn leer
@@ -52,19 +56,16 @@ export const useSettingsStore = defineStore('settings', () => {
                     selectedPatch.value = patchOptions.value[0];
                 }
             } else {
-                // Fallback auf hardcodierte Patches
-                patchOptions.value = ['16.1', '15.24', '15.23', '15.22'];
-                if (!selectedPatch.value && patchOptions.value.length > 0) {
-                    selectedPatch.value = patchOptions.value[0];
-                }
+                // Backend antwortet aber ohne Patches — lass das Array leer.
+                // Hardcodierte Fallbacks (16.1/15.24/...) verfallen mit jedem
+                // Riot-Release und produzieren genau den 20%/500-Bug, den dieser
+                // Store eigentlich vermeiden soll.
+                patchOptions.value = [];
             }
         } catch (error) {
             console.error('Fehler beim Laden der Patches:', error);
-            // Fallback auf hardcodierte Patches
-            patchOptions.value = ['16.1', '15.24', '15.23', '15.22'];
-            if (!selectedPatch.value && patchOptions.value.length > 0) {
-                selectedPatch.value = patchOptions.value[0];
-            }
+            // Selbe Begründung wie oben: leeres Array statt veralteter Liste.
+            patchOptions.value = [];
         } finally {
             patchesLoading.value = false;
         }
