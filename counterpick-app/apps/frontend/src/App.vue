@@ -50,6 +50,33 @@ function onLolConnected() {
     appStatus.setRunning();
 }
 
+/**
+ * Re-evaluate connectivity after a backend lifecycle event (`backend-ready`
+ * or after a "Restart" click). Mirrors the post-mount probe but skips the
+ * one-time setup so it's safe to call repeatedly.
+ */
+async function recheckBackendStatus() {
+    try {
+        const response = await checkBackendHealth();
+        if (response.status !== 'ok') {
+            backendStatus.value = 'offline';
+            appStatus.setDisconnected();
+            return;
+        }
+        backendStatus.value = 'online';
+        appStatus.setConnected();
+        const lcStatus = await getLeagueClientStatus();
+        if (lcStatus.client_running) {
+            appStatus.setRunning();
+        } else {
+            appStatus.setWaitingForLol();
+        }
+    } catch {
+        backendStatus.value = 'offline';
+        appStatus.setDisconnected();
+    }
+}
+
 onMounted(async () => {
     // Defer the updater check; never let it gate the rest of mount.
     setTimeout(() => {
@@ -73,6 +100,13 @@ onMounted(async () => {
             await listen('backend-disconnected', () => {
                 appStatus.setDisconnected();
                 backendStatus.value = 'offline';
+            });
+            // Pair to backend-disconnected: when the Rust shell restarts
+            // the sidecar (manual Restart button, crash recovery, dev
+            // hot-restart) the URL cache is invalidated in client.ts and
+            // we need to re-probe to escape the 'disconnected' banner.
+            await listen('backend-ready', () => {
+                void recheckBackendStatus();
             });
         }
 
