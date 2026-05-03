@@ -12,3 +12,10 @@ __pycache__/
 *.pyc
 .pytest_cache/
 public/
+
+# Test outputs
+public/data/
+tmp/
+
+# Vitest cache
+.vitest/
