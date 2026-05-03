@@ -8,6 +8,7 @@
         "smoke-test": "tsx src/smoke-test.ts public/data",
         "test": "vitest run --exclude tests/golden.test.ts",
         "test:golden": "vitest run tests/golden.test.ts",
+        "test:golden:snapshot": "REGENERATE_SNAPSHOT=1 vitest run tests/golden.test.ts",
         "test:capture": "tsx scripts/capture-golden.ts",
         "typecheck": "tsc --noEmit"
     },

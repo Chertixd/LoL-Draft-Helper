@@ -140,28 +140,22 @@ export async function getChampionDataFromLolalytics(
                     ) as Record<Role, Record<string, ChampionSynergyData>>,
                     damageProfile: championData.header.damage,
                     statsByTime: Array.from({ length: 5 }).map((_, i) => {
+                        const t = championData.sidebar.time.time;
+                        const tw = championData.sidebar.time.timeWin;
                         if (i === 0) {
                             return {
-                                games:
-                                    championData.sidebar.time.time[1] +
-                                    championData.sidebar.time.time[2],
-                                wins:
-                                    championData.sidebar.time.timeWin[1] +
-                                    championData.sidebar.time.timeWin[2],
+                                games: (t[1] ?? 0) + (t[2] ?? 0),
+                                wins: (tw[1] ?? 0) + (tw[2] ?? 0),
                             };
                         } else if (i === 4) {
                             return {
-                                games:
-                                    championData.sidebar.time.time[5] +
-                                    championData.sidebar.time.time[6],
-                                wins:
-                                    championData.sidebar.time.timeWin[5] +
-                                    championData.sidebar.time.timeWin[6],
+                                games: (t[5] ?? 0) + (t[6] ?? 0),
+                                wins: (tw[5] ?? 0) + (tw[6] ?? 0),
                             };
                         } else {
                             return {
-                                games: championData.sidebar.time.time[i + 2],
-                                wins: championData.sidebar.time.timeWin[i + 2],
+                                games: t[i + 2] ?? 0,
+                                wins: tw[i + 2] ?? 0,
                             };
                         }
                     }),
