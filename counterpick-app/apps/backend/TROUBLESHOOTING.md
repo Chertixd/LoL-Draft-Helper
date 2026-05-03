@@ -2,18 +2,18 @@
 
 ## Problem: Lockfile wird nicht gefunden
 
-### Lösung 1: Als Administrator ausführen
-- Rechtsklick auf `START_BACKEND_ADMIN.bat`
-- "Als Administrator ausführen" wählen
-- Oder: Rechtsklick auf `backend.py` → "Als Administrator ausführen"
+### Lösung 1: League Client als Admin gestartet?
+- Wenn Riot's Anti-Cheat den Client als erhöhten Prozess laufen lässt,
+  liest das Backend (auf normaler User-Ebene) die Lockfile nicht.
+- Workaround: League Client einmal ohne Admin starten, dann das Backend
+  via `pnpm tauri dev` aus demselben User-Kontext.
 
 ### Lösung 2: Windows Firewall prüfen
-- Windows Defender Firewall könnte lokale Verbindungen blockieren
-- Füge Python zur Firewall-Ausnahmeliste hinzu:
+- Windows Defender Firewall könnte lokale Verbindungen auf 127.0.0.1
+  blockieren. Python.exe zur Ausnahmeliste hinzufügen:
   1. Windows Defender Firewall öffnen
   2. "Eine App durch die Firewall zulassen"
-  3. Python.exe hinzufügen (sowohl für private als auch öffentliche Netzwerke)
-  4. Pfad: `D:\Programme\anaconda3\envs\lolalytics-env\python.exe`
+  3. Python.exe hinzufügen (private und öffentliche Netzwerke)
 
 ### Lösung 3: Antivirus-Software
 - Manche Antivirus-Programme blockieren den Zugriff auf die Lockfile
@@ -41,11 +41,7 @@
 
 ## Problem: "Permission denied" oder "Access denied"
 
-### Lösung 1: Als Administrator starten
-- Nutze `START_BACKEND_ADMIN.bat` statt `START_BACKEND.bat`
-- Oder: Rechtsklick → "Als Administrator ausführen"
-
-### Lösung 2: Berechtigungen prüfen
+### Lösung 1: Berechtigungen prüfen
 - Prüfe ob der Benutzer Leseberechtigung für den League of Legends Ordner hat:
   `C:\Users\<Benutzername>\AppData\Local\Riot Games\League of Legends`
 - Rechtsklick auf Ordner → Eigenschaften → Sicherheit → Prüfe Berechtigungen
@@ -54,12 +50,9 @@
 
 ### Lösung 1: Lockfile neu lesen
 - Die Lockfile wird bei jedem Client-Start neu erstellt
-- Stoppe das Backend und starte es neu
+- Stoppe die App und starte sie neu (Tauri-Fenster schließen, dann
+  wieder `pnpm tauri dev` oder die installierte App öffnen)
 - Stelle sicher, dass der League Client läuft
-
-### Lösung 2: Admin-Rechte
-- Starte das Backend als Administrator
-- Die Lockfile kann ohne Admin-Rechte möglicherweise nicht korrekt gelesen werden
 
 ## Problem: WebSocket-Verbindung schlägt fehl
 
@@ -91,11 +84,12 @@
 
 ## Allgemeine Tipps
 
-1. **Immer als Administrator starten**: Viele Probleme werden durch Admin-Rechte gelöst
-2. **League Client zuerst starten**: Warte bis der Client vollständig geladen ist
-3. **Backend neu starten**: Nach Änderungen immer Backend neu starten
-4. **Logs prüfen**: Die Backend-Ausgabe enthält wichtige Informationen
-5. **Frontend aktualisieren**: Nach Backend-Änderungen Browser-Seite neu laden (F5)
+1. **League Client zuerst starten**: Warte bis der Client vollständig geladen ist
+2. **App neu starten**: Tauri-Fenster schließen → erneut öffnen, damit der
+   Sidecar mit frischen Pfaden hochfährt
+3. **Logs prüfen**:
+   - Dev-Modus: `%APPDATA%\dev.till.lol-draft-analyzer\logs\backend.log`
+   - Installierte App: `%LOCALAPPDATA%\lol-draft-analyzer\lol-draft-analyzer\Logs\backend.log`
 
 ## Bekannte Einschränkungen
 

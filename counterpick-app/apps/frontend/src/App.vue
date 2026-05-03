@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue';
+import { ref, onMounted, onBeforeUnmount, computed, watch } from 'vue';
 import { RouterView, RouterLink } from 'vue-router';
 import { checkBackendHealth, getLeagueClientStatus } from '@/api/backend';
 import { initBackendListeners } from '@/api/client';
@@ -50,80 +50,169 @@ function onLolConnected() {
     appStatus.setRunning();
 }
 
-onMounted(async () => {
-    // Initialize Tauri event listeners (backend-ready, backend-disconnected)
-    await initBackendListeners();
+/**
+ * Re-evaluate connectivity after a backend lifecycle event (`backend-ready`
+ * or after a "Restart" click). Mirrors the post-mount probe but skips the
+ * one-time setup so it's safe to call repeatedly.
+ */
+// Auto-recovery: when state flips to 'disconnected', the Rust supervisor
+// has stopped supervising (loop breaks after the disconnect emit). The only
+// way back to 'running' is a manual Restart click OR a backend health probe
+// that succeeds. Poll every 3s while disconnected so a recovered sidecar
+// (e.g. Vite hot-reload respawn, transient try_wait false-positive) auto-
+// clears the banner without user action.
+let recoveryTimer: ReturnType<typeof setInterval> | null = null;
 
-    // Check for updates after backend is ready (2s delay for sidecar startup)
-    setTimeout(() => {
-        checkForUpdates();
-    }, 2000);
-
-    // Set up backend-disconnected handler for Tauri
-    if ('__TAURI__' in window) {
-        const { listen } = await import('@tauri-apps/api/event');
-        await listen('backend-disconnected', () => {
-            appStatus.setDisconnected();
-            backendStatus.value = 'offline';
-        });
+function stopRecoveryPolling() {
+    if (recoveryTimer !== null) {
+        clearInterval(recoveryTimer);
+        recoveryTimer = null;
     }
+}
 
+function startRecoveryPolling() {
+    if (recoveryTimer !== null) return;
+    recoveryTimer = setInterval(() => {
+        void recheckBackendStatus();
+    }, 3000);
+}
+
+watch(
+    () => appStatus.state,
+    (newState) => {
+        if (newState === 'disconnected') {
+            startRecoveryPolling();
+        } else {
+            stopRecoveryPolling();
+        }
+    }
+);
+
+onBeforeUnmount(() => {
+    stopRecoveryPolling();
+});
+
+async function recheckBackendStatus() {
     try {
         const response = await checkBackendHealth();
-        if (response.status === 'ok') {
-            backendStatus.value = 'online';
-            appStatus.setConnected();
-
-            // Check cache staleness from health response
-            const cached = (response as Record<string, unknown>).cached;
-            if (cached && typeof cached === 'object') {
-                const entries = Object.values(cached as Record<string, unknown>);
-                // stale_status returns Dict[str, bool] -- count stale vs total
-                const staleCount = entries.filter(v => v === true).length;
-                // Estimate age: if any table is stale, mark > 48h as a heuristic
-                const oldestHours = staleCount > 0 ? 72 : 0;
-                appStatus.updateCacheStatus({
-                    oldest_fetch_hours: oldestHours,
-                    newest_fetch_iso: null,
-                });
-            }
-
-            // Check status endpoint for CDN warm-up phase
-            try {
-                const { getBackendURL } = await import('@/api/client');
-                const statusResp = await fetch(
-                    (await getBackendURL()) + '/api/status'
-                );
-                if (statusResp.ok) {
-                    const statusData = await statusResp.json();
-                    if (statusData.phase === 'warming') {
-                        appStatus.setLoading(statusData.done ?? 0, statusData.total ?? 9);
-                        // CdnProgressView will take over polling
-                        settingsStore.loadPatches();
-                        return;
-                    }
-                }
-            } catch {
-                // /api/status not reachable; proceed to LoL check
-            }
-
-            // Check League Client status
-            const lcStatus = await getLeagueClientStatus();
-            if (lcStatus.client_running) {
-                appStatus.setRunning();
-            } else {
-                appStatus.setWaitingForLol();
-            }
-        } else {
+        if (response.status !== 'ok') {
             backendStatus.value = 'offline';
             appStatus.setDisconnected();
+            return;
+        }
+        backendStatus.value = 'online';
+        appStatus.setConnected();
+        const lcStatus = await getLeagueClientStatus();
+        if (lcStatus.client_running) {
+            appStatus.setRunning();
+        } else {
+            appStatus.setWaitingForLol();
         }
     } catch {
         backendStatus.value = 'offline';
         appStatus.setDisconnected();
     }
+}
 
-    settingsStore.loadPatches();
+onMounted(async () => {
+    // Defer the updater check; never let it gate the rest of mount.
+    setTimeout(() => {
+        checkForUpdates();
+    }, 2000);
+
+    // Single try/finally around the whole sequence. The earlier version
+    // ran `initBackendListeners()` and the `__TAURI__` listen() block
+    // BEFORE entering the try, so any failure in those (Tauri IPC not
+    // yet ready, plugin load race) left `backendStatus` stuck on
+    // 'checking' forever — exactly the "Backend: Checking…" footer
+    // freeze we hit in the field. The finally guarantees the footer
+    // resolves to a real state and that loadPatches always fires once,
+    // even when the health probe itself throws.
+    let isWarming = false;
+    try {
+        await initBackendListeners();
+
+        if ('__TAURI__' in window) {
+            const { listen } = await import('@tauri-apps/api/event');
+            await listen('backend-disconnected', () => {
+                appStatus.setDisconnected();
+                backendStatus.value = 'offline';
+            });
+            // Pair to backend-disconnected: when the Rust shell restarts
+            // the sidecar (manual Restart button, crash recovery, dev
+            // hot-restart) the URL cache is invalidated in client.ts and
+            // we need to re-probe to escape the 'disconnected' banner.
+            await listen('backend-ready', () => {
+                void recheckBackendStatus();
+            });
+        }
+
+        const response = await checkBackendHealth();
+        if (response.status !== 'ok') {
+            backendStatus.value = 'offline';
+            appStatus.setDisconnected();
+            return;
+        }
+
+        backendStatus.value = 'online';
+        appStatus.setConnected();
+
+        // Check cache staleness from health response
+        const cached = (response as Record<string, unknown>).cached;
+        if (cached && typeof cached === 'object') {
+            const entries = Object.values(cached as Record<string, unknown>);
+            // stale_status returns Dict[str, bool] -- count stale vs total
+            const staleCount = entries.filter(v => v === true).length;
+            // Estimate age: if any table is stale, mark > 48h as a heuristic
+            const oldestHours = staleCount > 0 ? 72 : 0;
+            appStatus.updateCacheStatus({
+                oldest_fetch_hours: oldestHours,
+                newest_fetch_iso: null,
+            });
+        }
+
+        // Check status endpoint for CDN warm-up phase
+        try {
+            const { getBackendURL } = await import('@/api/client');
+            const statusResp = await fetch(
+                (await getBackendURL()) + '/api/status'
+            );
+            if (statusResp.ok) {
+                const statusData = await statusResp.json();
+                if (statusData.phase === 'warming') {
+                    appStatus.setLoading(statusData.done ?? 0, statusData.total ?? 9);
+                    isWarming = true;
+                    // CdnProgressView takes over polling; the finally below
+                    // still fires loadPatches() for consistency.
+                    return;
+                }
+            }
+        } catch {
+            // /api/status not reachable; proceed to LoL check
+        }
+
+        // Check League Client status
+        const lcStatus = await getLeagueClientStatus();
+        if (lcStatus.client_running) {
+            appStatus.setRunning();
+        } else {
+            appStatus.setWaitingForLol();
+        }
+    } catch {
+        backendStatus.value = 'offline';
+        appStatus.setDisconnected();
+    } finally {
+        // Always trigger patch load. settingsStore.loadPatches has its
+        // own in-flight guard so multiple invocations during the warmup
+        // → ready transition coalesce safely.
+        settingsStore.loadPatches();
+        // If we never reached one of the explicit branches that flips
+        // backendStatus, force it to a deterministic value so the
+        // footer never stays on "Checking…".
+        if (backendStatus.value === 'checking') {
+            backendStatus.value = isWarming ? 'online' : 'offline';
+        }
+    }
 });
 </script>
 

@@ -1,5 +1,4 @@
 requests
-lxml
 pytest
 urllib3
 flask

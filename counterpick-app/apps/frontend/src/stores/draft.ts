@@ -358,15 +358,19 @@ export const useDraftStore = defineStore('draft', () => {
         const now = Date.now();
         const championsToFetch: string[] = [];
         
-        // Hole currentPatch aus Settings Store
+        // Hole currentPatch aus Settings Store. Niemals den String 'latest'
+        // an die API geben — das Backend behandelt das als wörtlichen Patch-
+        // Wert, findet null Reihen und antwortet mit 20% pro Rolle. Leer
+        // lassen → undefined an die API → Backend wählt den neuesten Patch.
         const settingsStore = useSettingsStore();
-        const patch = settingsStore.currentPatch || 'latest';
-        
+        const patch = settingsStore.currentPatch;
+        const cacheKey_patch = patch || '__latest__';
+
         // Prüfe Cache für jeden Champion (mit Patch-spezifischem Key)
         for (const champion of champions) {
             if (!champion) continue;
-            
-            const cacheKey = `${champion}:${patch}`;
+
+            const cacheKey = `${champion}:${cacheKey_patch}`;
             const cached = roleProbabilitiesCache.value.get(cacheKey);
             if (cached && (now - cached.timestamp) < CACHE_TTL) {
                 results.set(champion, cached.probabilities);
@@ -374,7 +378,7 @@ export const useDraftStore = defineStore('draft', () => {
                 championsToFetch.push(champion);
             }
         }
-        
+
         // Lade fehlende Wahrscheinlichkeiten
         if (championsToFetch.length > 0) {
             try {
@@ -394,7 +398,7 @@ export const useDraftStore = defineStore('draft', () => {
                             results.set(champion, probs);
                             
                             // Cache speichern mit Patch-spezifischem Key
-                            const cacheKey = `${champion}:${patch}`;
+                            const cacheKey = `${champion}:${cacheKey_patch}`;
                             roleProbabilitiesCache.value.set(cacheKey, {
                                 probabilities: probs,
                                 totalGames: data.totalGames ?? 0,

@@ -3,8 +3,19 @@ node_modules/
 *.log
 .DS_Store
 
+# Lockfile authority: pnpm-lock.yaml. Reject npm/yarn lockfiles.
+package-lock.json
+yarn.lock
+
 # Python
 __pycache__/
 *.pyc
 .pytest_cache/
 public/
+
+# Test outputs
+public/data/
+tmp/
+
+# Vitest cache
+.vitest/

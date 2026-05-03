@@ -34,8 +34,10 @@ def _ensure_lolalytics_api_installed():
     """Fail fast with a helpful message if the editable package isn't installed.
 
     Running ``python backend.py`` from the test requires ``lolalytics_api`` to
-    be importable from site-packages. See start.ps1 line 78 for the dev-setup
-    pattern (``pip install -e .`` from apps/backend/).
+    be importable from site-packages. The dev-setup pattern is
+    ``pnpm backend:setup`` from ``counterpick-app/`` (which runs
+    ``pip install -r requirements.txt && pip install -e .`` under
+    ``apps/backend/``).
     """
     if importlib.util.find_spec("lolalytics_api") is None:
         pytest.skip(
