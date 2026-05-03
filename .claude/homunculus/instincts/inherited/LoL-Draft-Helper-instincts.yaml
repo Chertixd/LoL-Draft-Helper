@@ -1,0 +1,667 @@
+# Instincts generated from https://github.com/Chertixd/LoL-Draft-Helper
+# Generated: 2026-05-03T20:56:14.520Z
+# Version: 2.0
+# NOTE: This file supplements (does not replace) any existing curated instincts.
+# High-confidence manually curated instincts should be preserved alongside these.
+
+---
+id: LoL-Draft-Helper-commit-conventional
+trigger: "when writing a commit message"
+confidence: 0.85
+domain: git
+source: repo-analysis
+source_repo: https://github.com/Chertixd/LoL-Draft-Helper
+---
+
+# LoL Draft Helper Commit Conventional
+
+## Action
+
+Use conventional commit format with prefixes: feat, chore, fix, test, ci
+
+## Evidence
+
+- 36 commits analyzed
+- Detected conventional commit pattern
+- Examples: chore(dev): add `pnpm sidecar` script for local Tauri builds, fix(frontend): drop hardcoded patch fallbacks that cause 20%/500 race
+
+---
+id: LoL-Draft-Helper-commit-length
+trigger: "when writing a commit message"
+confidence: 0.6
+domain: git
+source: repo-analysis
+source_repo: https://github.com/Chertixd/LoL-Draft-Helper
+---
+
+# LoL Draft Helper Commit Length
+
+## Action
+
+Write moderate-length commit messages (~65 characters)
+
+## Evidence
+
+- Average commit message length: 65 chars
+- Based on 36 commits
+
+---
+id: LoL-Draft-Helper-naming-files
+trigger: "when creating a new file"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/Chertixd/LoL-Draft-Helper
+---
+
+# LoL Draft Helper Naming Files
+
+## Action
+
+Use kebab-case naming convention
+
+## Evidence
+
+- Analyzed file naming patterns in repository
+- Dominant pattern: kebab-case
+
+---
+id: LoL-Draft-Helper-import-relative
+trigger: "when importing modules"
+confidence: 0.75
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/Chertixd/LoL-Draft-Helper
+---
+
+# LoL Draft Helper Import Relative
+
+## Action
+
+Use relative imports for project files
+
+## Evidence
+
+- Import analysis shows relative import pattern
+- Example: import { x } from '../lib/x'
+
+---
+id: LoL-Draft-Helper-export-style
+trigger: "when exporting from a module"
+confidence: 0.7
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/Chertixd/LoL-Draft-Helper
+---
+
+# LoL Draft Helper Export Style
+
+## Action
+
+Prefer named exports
+
+## Evidence
+
+- Export pattern analysis
+- Dominant style: named
+
+---
+id: LoL-Draft-Helper-test-framework
+trigger: "when writing tests"
+confidence: 0.9
+domain: testing
+source: repo-analysis
+source_repo: https://github.com/Chertixd/LoL-Draft-Helper
+---
+
+# LoL Draft Helper Test Framework
+
+## Action
+
+Use vitest as the test framework
+
+## Evidence
+
+- Test framework detected: vitest
+- File pattern: *.test.ts
+
+---
+id: LoL-Draft-Helper-test-naming
+trigger: "when creating a test file"
+confidence: 0.85
+domain: testing
+source: repo-analysis
+source_repo: https://github.com/Chertixd/LoL-Draft-Helper
+---
+
+# LoL Draft Helper Test Naming
+
+## Action
+
+Name test files using the pattern: *.test.ts
+
+## Evidence
+
+- File pattern: *.test.ts
+- Consistent across test files
+
+---
+id: LoL-Draft-Helper-test-mocking
+trigger: "when mocking dependencies in tests"
+confidence: 0.75
+domain: testing
+source: repo-analysis
+source_repo: https://github.com/Chertixd/LoL-Draft-Helper
+---
+
+# LoL Draft Helper Test Mocking
+
+## Action
+
+Use vi.mock for mocking
+
+## Evidence
+
+- Mocking pattern detected: vi.mock
+- Consistent across test files
+
+---
+id: LoL-Draft-Helper-test-types
+trigger: "when planning tests for a feature"
+confidence: 0.7
+domain: testing
+source: repo-analysis
+source_repo: https://github.com/Chertixd/LoL-Draft-Helper
+---
+
+# LoL Draft Helper Test Types
+
+## Action
+
+Write unit, integration tests to match project standards
+
+## Evidence
+
+- Test types detected: unit, integration
+- Coverage config: no
+
+---
+id: LoL-Draft-Helper-workflow-feature-development
+trigger: "when implementing a new feature"
+confidence: 0.9
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/Chertixd/LoL-Draft-Helper
+---
+
+# LoL Draft Helper Workflow Feature Development
+
+## Action
+
+Follow the feature-development workflow:
+1. Add feature implementation
+2. Add tests for feature
+3. Update documentation
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~13x per month
+- Files: supabase-dataset-updater/*, supabase-dataset-updater/src/*, supabase-dataset-updater/tests/*
+
+---
+id: LoL-Draft-Helper-workflow-add-or-update-etl-module-with-tests
+trigger: "when doing add or update etl module with tests"
+confidence: 0.75
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/Chertixd/LoL-Draft-Helper
+---
+
+# LoL Draft Helper Workflow Add Or Update Etl Module With Tests
+
+## Action
+
+Follow the add-or-update-etl-module-with-tests workflow:
+1. Create or update a src/<module>.ts file in supabase-dataset-updater/src/
+2. Create or update a matching tests/<module>.test.ts file in supabase-dataset-updater/tests/
+3. Commit both files together
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~5x per month
+- Files: supabase-dataset-updater/src/*.ts, supabase-dataset-updater/tests/*.test.ts
+
+---
+id: LoL-Draft-Helper-workflow-etl-pipeline-golden-test-workflow
+trigger: "when doing etl pipeline golden test workflow"
+confidence: 0.6
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/Chertixd/LoL-Draft-Helper
+---
+
+# LoL Draft Helper Workflow Etl Pipeline Golden Test Workflow
+
+## Action
+
+Follow the etl-pipeline-golden-test-workflow workflow:
+1. Capture or update fixtures in tests/fixtures/
+2. Update or add expected output files in tests/fixtures/expected-pipeline-output/
+3. Update or add a golden test in tests/golden.test.ts
+4. Update package.json if new scripts or dependencies are needed
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~2x per month
+- Files: supabase-dataset-updater/tests/fixtures/*, supabase-dataset-updater/tests/golden.test.ts, supabase-dataset-updater/package.json
+
+---
+id: LoL-Draft-Helper-workflow-frontend-state-or-ui-bugfix
+trigger: "when doing frontend state or ui bugfix"
+confidence: 0.65
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/Chertixd/LoL-Draft-Helper
+---
+
+# LoL Draft Helper Workflow Frontend State Or Ui Bugfix
+
+## Action
+
+Follow the frontend-state-or-ui-bugfix workflow:
+1. Identify the problematic store or component file in apps/frontend/src/
+2. Update the file to fix state logic or UI behaviour
+3. Commit the change (often with a detailed commit message explaining the bug and fix)
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~3x per month
+- Files: counterpick-app/apps/frontend/src/*.ts, counterpick-app/apps/frontend/src/*.vue
+
+---
+id: LoL-Draft-Helper-workflow-backend-api-or-data-contract-removal
+trigger: "when doing backend api or data contract removal"
+confidence: 0.6
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/Chertixd/LoL-Draft-Helper
+---
+
+# LoL Draft Helper Workflow Backend Api Or Data Contract Removal
+
+## Action
+
+Follow the backend-api-or-data-contract-removal workflow:
+1. Delete unused route handlers or modules in apps/backend/
+2. Remove related imports from backend.py or other entrypoints
+3. Update requirements or pyproject.toml to drop dependencies
+4. Update or rewrite __init__.py if submodule structure changes
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~2x per month
+- Files: counterpick-app/apps/backend/backend.py, counterpick-app/apps/backend/requirements.txt, counterpick-app/apps/backend/pyproject.toml
+
+---
+id: LoL-Draft-Helper-workflow-dev-environment-scripts-and-docs-update
+trigger: "when doing dev environment scripts and docs update"
+confidence: 0.6
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/Chertixd/LoL-Draft-Helper
+---
+
+# LoL Draft Helper Workflow Dev Environment Scripts And Docs Update
+
+## Action
+
+Follow the dev-environment-scripts-and-docs-update workflow:
+1. Add or update scripts in package.json or scripts/ directories
+2. Remove obsolete .bat, .ps1, or Python scripts
+3. Update documentation files (e.g., TROUBLESHOOTING.md) to match new workflow
+4. Update test docstrings if they reference old scripts
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~2x per month
+- Files: counterpick-app/package.json, counterpick-app/scripts/*, counterpick-app/START_FRONTEND.bat
+
+---
+id: lol-draft-helper-instinct-file-naming
+trigger: "When creating or renaming a file"
+confidence: 0.9
+domain: code-style
+source: repo-analysis
+source_repo: Chertixd/LoL-Draft-Helper
+---
+
+# Lol Draft Helper Instinct File Naming
+
+## Action
+
+Use kebab-case for file names (e.g., my-module.ts)
+
+## Evidence
+
+- Pattern in namingConventions.files
+- Observed in supabase-dataset-updater/src/*.ts
+
+---
+id: lol-draft-helper-instinct-function-naming
+trigger: "When defining a function"
+confidence: 0.9
+domain: code-style
+source: repo-analysis
+source_repo: Chertixd/LoL-Draft-Helper
+---
+
+# Lol Draft Helper Instinct Function Naming
+
+## Action
+
+Use camelCase for function names (e.g., processData)
+
+## Evidence
+
+- Pattern in namingConventions.functions
+
+---
+id: lol-draft-helper-instinct-class-naming
+trigger: "When defining a class"
+confidence: 0.9
+domain: code-style
+source: repo-analysis
+source_repo: Chertixd/LoL-Draft-Helper
+---
+
+# Lol Draft Helper Instinct Class Naming
+
+## Action
+
+Use PascalCase for class names (e.g., DataProcessor)
+
+## Evidence
+
+- Pattern in namingConventions.classes
+
+---
+id: lol-draft-helper-instinct-constant-naming
+trigger: "When defining a constant"
+confidence: 0.9
+domain: code-style
+source: repo-analysis
+source_repo: Chertixd/LoL-Draft-Helper
+---
+
+# Lol Draft Helper Instinct Constant Naming
+
+## Action
+
+Use SCREAMING_SNAKE_CASE for constants (e.g., MAX_COUNT)
+
+## Evidence
+
+- Pattern in namingConventions.constants
+
+---
+id: lol-draft-helper-instinct-import-style
+trigger: "When importing modules"
+confidence: 0.85
+domain: code-style
+source: repo-analysis
+source_repo: Chertixd/LoL-Draft-Helper
+---
+
+# Lol Draft Helper Instinct Import Style
+
+## Action
+
+Use relative import paths (e.g., import x from './x')
+
+## Evidence
+
+- Pattern in importStyle
+- Seen in supabase-dataset-updater/src/*.ts
+
+---
+id: lol-draft-helper-instinct-export-style
+trigger: "When exporting functions or classes"
+confidence: 0.85
+domain: code-style
+source: repo-analysis
+source_repo: Chertixd/LoL-Draft-Helper
+---
+
+# Lol Draft Helper Instinct Export Style
+
+## Action
+
+Use named exports (e.g., export function foo {})
+
+## Evidence
+
+- Pattern in exportStyle
+
+---
+id: lol-draft-helper-instinct-test-file-pattern
+trigger: "When creating a test file"
+confidence: 0.9
+domain: testing
+source: repo-analysis
+source_repo: Chertixd/LoL-Draft-Helper
+---
+
+# Lol Draft Helper Instinct Test File Pattern
+
+## Action
+
+Name test files with a .test.ts suffix (e.g., my-module.test.ts)
+
+## Evidence
+
+- Pattern in testing.filePattern
+- Seen in supabase-dataset-updater/tests/*.test.ts
+
+---
+id: lol-draft-helper-instinct-test-framework
+trigger: "When writing tests"
+confidence: 0.9
+domain: testing
+source: repo-analysis
+source_repo: Chertixd/LoL-Draft-Helper
+---
+
+# Lol Draft Helper Instinct Test Framework
+
+## Action
+
+Use the Vitest framework and vi.mock for mocking
+
+## Evidence
+
+- Pattern in testing.framework
+- Pattern in testing.mockingStyle
+
+---
+id: lol-draft-helper-instinct-test-types
+trigger: "When designing tests"
+confidence: 0.8
+domain: testing
+source: repo-analysis
+source_repo: Chertixd/LoL-Draft-Helper
+---
+
+# Lol Draft Helper Instinct Test Types
+
+## Action
+
+Write both unit and integration tests as appropriate
+
+## Evidence
+
+- Pattern in testing.testTypes
+
+---
+id: lol-draft-helper-instinct-no-coverage-config
+trigger: "When configuring tests"
+confidence: 0.7
+domain: testing
+source: repo-analysis
+source_repo: Chertixd/LoL-Draft-Helper
+---
+
+# Lol Draft Helper Instinct No Coverage Config
+
+## Action
+
+Do not add code coverage configuration by default
+
+## Evidence
+
+- testing.coverageConfig is false
+
+---
+id: lol-draft-helper-instinct-commit-format
+trigger: "When writing a commit message"
+confidence: 0.9
+domain: git
+source: repo-analysis
+source_repo: Chertixd/LoL-Draft-Helper
+---
+
+# Lol Draft Helper Instinct Commit Format
+
+## Action
+
+Use Conventional Commits format with prefixes: feat, fix, chore, test, ci
+
+## Evidence
+
+- Pattern in commits.prefixes
+- Seen in commits: 'chore(dev): add `pnpm sidecar` script for local Tauri builds', 'fix(frontend): drop hardcoded patch fallbacks...'
+
+---
+id: lol-draft-helper-instinct-commit-length
+trigger: "When writing a commit message"
+confidence: 0.8
+domain: git
+source: repo-analysis
+source_repo: Chertixd/LoL-Draft-Helper
+---
+
+# Lol Draft Helper Instinct Commit Length
+
+## Action
+
+Keep commit messages concise (average ~65 characters)
+
+## Evidence
+
+- Pattern in commits.averageLength
+
+---
+id: lol-draft-helper-instinct-add-or-update-etl-module-with-tests
+trigger: "When adding or updating an ETL module or utility"
+confidence: 0.95
+domain: workflow
+source: repo-analysis
+source_repo: Chertixd/LoL-Draft-Helper
+---
+
+# Lol Draft Helper Instinct Add Or Update Etl Module With Tests
+
+## Action
+
+Create or update a src/<module>.ts file and a matching tests/<module>.test.ts file in supabase-dataset-updater, and commit both together
+
+## Evidence
+
+- Workflow: add-or-update-etl-module-with-tests
+- Seen in supabase-dataset-updater/src/*.ts and supabase-dataset-updater/tests/*.test.ts
+
+---
+id: lol-draft-helper-instinct-etl-pipeline-golden-test
+trigger: "When verifying ETL output or adding regression protection"
+confidence: 0.9
+domain: workflow
+source: repo-analysis
+source_repo: Chertixd/LoL-Draft-Helper
+---
+
+# Lol Draft Helper Instinct Etl Pipeline Golden Test
+
+## Action
+
+Capture or update fixtures, expected outputs, and golden tests in supabase-dataset-updater/tests/fixtures and golden.test.ts, updating package.json if needed
+
+## Evidence
+
+- Workflow: etl-pipeline-golden-test-workflow
+- Seen in supabase-dataset-updater/tests/fixtures/* and golden.test.ts
+
+---
+id: lol-draft-helper-instinct-frontend-state-ui-bugfix
+trigger: "When fixing a frontend state or UI bug"
+confidence: 0.88
+domain: workflow
+source: repo-analysis
+source_repo: Chertixd/LoL-Draft-Helper
+---
+
+# Lol Draft Helper Instinct Frontend State Ui Bugfix
+
+## Action
+
+Update the relevant .ts or .vue file in counterpick-app/apps/frontend/src/ and commit with a detailed message
+
+## Evidence
+
+- Workflow: frontend-state-or-ui-bugfix
+- Seen in counterpick-app/apps/frontend/src/*.ts and *.vue
+
+---
+id: lol-draft-helper-instinct-backend-api-removal
+trigger: "When removing dead or legacy backend code or APIs"
+confidence: 0.9
+domain: workflow
+source: repo-analysis
+source_repo: Chertixd/LoL-Draft-Helper
+---
+
+# Lol Draft Helper Instinct Backend Api Removal
+
+## Action
+
+Delete unused backend modules, update imports, and remove dependencies in requirements.txt or pyproject.toml
+
+## Evidence
+
+- Workflow: backend-api-or-data-contract-removal
+- Seen in counterpick-app/apps/backend/backend.py, requirements.txt, pyproject.toml
+
+---
+id: lol-draft-helper-instinct-dev-scripts-docs-update
+trigger: "When updating local development workflow or scripts"
+confidence: 0.85
+domain: workflow
+source: repo-analysis
+source_repo: Chertixd/LoL-Draft-Helper
+---
+
+# Lol Draft Helper Instinct Dev Scripts Docs Update
+
+## Action
+
+Update or add scripts in package.json/scripts/, remove obsolete launchers, and update documentation and test docstrings as needed
+
+## Evidence
+
+- Workflow: dev-environment-scripts-and-docs-update
+- Seen in counterpick-app/package.json, scripts/*, TROUBLESHOOTING.md
+
