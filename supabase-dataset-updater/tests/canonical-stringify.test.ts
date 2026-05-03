@@ -1,4 +1,6 @@
 import { describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { canonicalStringify } from "../src/canonical-stringify";
 
 const enc = (s: string) => new TextEncoder().encode(s);
@@ -117,4 +119,22 @@ describe("canonicalStringify — unicode", () => {
 
     it("escapes backslashes", () =>
         eq(canonicalStringify("a\\b"), '"a\\\\b"'));
+});
+
+describe("canonicalStringify — Python golden cases", () => {
+    const casesPath = resolve(__dirname, "fixtures/canonical-cases.json");
+    const cases = JSON.parse(readFileSync(casesPath, "utf-8")) as Array<{
+        name: string;
+        input: unknown;
+        expected: string;
+    }>;
+
+    for (const c of cases) {
+        it(`matches Python output for: ${c.name}`, () => {
+            const actual = Buffer.from(canonicalStringify(c.input)).toString("utf-8");
+            // ensure_ascii=True is implicit — non-ASCII inputs in fixtures
+            // come back from Python as \uXXXX escapes already.
+            expect(actual).toBe(c.expected);
+        });
+    }
 });

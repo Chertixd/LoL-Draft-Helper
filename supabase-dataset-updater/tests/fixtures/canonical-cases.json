@@ -1,0 +1,120 @@
+[
+  {
+    "name": "rows-row",
+    "input": [
+      {
+        "a": 1,
+        "b": 2
+      },
+      {
+        "a": 3,
+        "b": 4
+      }
+    ],
+    "expected": "[{\"a\":1,\"b\":2},{\"a\":3,\"b\":4}]"
+  },
+  {
+    "name": "deeply-nested",
+    "input": {
+      "a": {
+        "b": {
+          "c": {
+            "d": [
+              1,
+              2,
+              3
+            ]
+          }
+        }
+      }
+    },
+    "expected": "{\"a\":{\"b\":{\"c\":{\"d\":[1,2,3]}}}}"
+  },
+  {
+    "name": "integer-keys",
+    "input": {
+      "10": "x",
+      "1": "y",
+      "2": "z"
+    },
+    "expected": "{\"1\":\"y\",\"10\":\"x\",\"2\":\"z\"}"
+  },
+  {
+    "name": "unicode-mixed",
+    "input": {
+      "name": "三国杀",
+      "id": 1
+    },
+    "expected": "{\"id\":1,\"name\":\"\\u4e09\\u56fd\\u6740\"}"
+  },
+  {
+    "name": "emoji",
+    "input": {
+      "flag": "🇩🇪",
+      "smile": "😀"
+    },
+    "expected": "{\"flag\":\"\\ud83c\\udde9\\ud83c\\uddea\",\"smile\":\"\\ud83d\\ude00\"}"
+  },
+  {
+    "name": "rtl",
+    "input": {
+      "text": "مرحبا"
+    },
+    "expected": "{\"text\":\"\\u0645\\u0631\\u062d\\u0628\\u0627\"}"
+  },
+  {
+    "name": "large-integer",
+    "input": {
+      "games": 1234567890
+    },
+    "expected": "{\"games\":1234567890}"
+  },
+  {
+    "name": "negative",
+    "input": {
+      "delta": -5.4
+    },
+    "expected": "{\"delta\":-5.4}"
+  },
+  {
+    "name": "boolean-mixed",
+    "input": [
+      true,
+      false,
+      null,
+      0,
+      ""
+    ],
+    "expected": "[true,false,null,0,\"\"]"
+  },
+  {
+    "name": "control-chars",
+    "input": "tab\there\nnewline",
+    "expected": "\"tab\\there\\nnewline\""
+  },
+  {
+    "name": "backslash",
+    "input": {
+      "path": "C:\\Users\\till"
+    },
+    "expected": "{\"path\":\"C:\\\\Users\\\\till\"}"
+  },
+  {
+    "name": "quote-inside",
+    "input": "he said \"hi\"",
+    "expected": "\"he said \\\"hi\\\"\""
+  },
+  {
+    "name": "matchups-row-shape",
+    "input": {
+      "patch": "16.8",
+      "champion_key": "61",
+      "role": "support",
+      "opponent_key": "157",
+      "opponent_role": "middle",
+      "games": 245,
+      "wins": 130
+    },
+    "expected": "{\"champion_key\":\"61\",\"games\":245,\"opponent_key\":\"157\",\"opponent_role\":\"middle\",\"patch\":\"16.8\",\"role\":\"support\",\"wins\":130}"
+  }
+]
