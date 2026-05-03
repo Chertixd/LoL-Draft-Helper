@@ -69,7 +69,7 @@ async function fetchWithRetries(
 }
 
 // CLI entry point: `tsx src/smoke-test.ts public/data`
-if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith("smoke-test.ts")) {
+if (process.argv[1]?.endsWith("smoke-test.ts") || process.argv[1]?.endsWith("smoke-test.js")) {
     const localDir = process.argv[2] ?? "public/data";
     const cdn =
         process.env.CDN_BASE_URL ??

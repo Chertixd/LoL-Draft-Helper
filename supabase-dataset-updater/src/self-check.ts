@@ -28,7 +28,7 @@ export async function verifyAllOutputs(dir: string): Promise<void> {
 }
 
 // CLI entry point: `tsx src/self-check.ts public/data`
-if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith("self-check.ts")) {
+if (process.argv[1]?.endsWith("self-check.ts") || process.argv[1]?.endsWith("self-check.js")) {
     const dir = process.argv[2] ?? "public/data";
     verifyAllOutputs(dir).catch((err) => {
         console.error(`[self-check] FAIL: ${err.message}`);

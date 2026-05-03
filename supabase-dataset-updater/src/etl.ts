@@ -204,11 +204,7 @@ async function main(): Promise<void> {
 // guards on import.meta.url so import-side-effects don't auto-run main during tests.
 export { main };
 
-if (
-    import.meta.url === `file://${process.argv[1]}` ||
-    process.argv[1]?.endsWith("etl.ts") ||
-    process.argv[1]?.endsWith("etl.js")
-) {
+if (process.argv[1]?.endsWith("etl.ts") || process.argv[1]?.endsWith("etl.js")) {
     main().catch((err) => {
         console.error("[etl] FATAL:", err);
         process.exit(1);
