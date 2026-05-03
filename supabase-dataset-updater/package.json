@@ -3,7 +3,7 @@
     "version": "2.0.0",
     "description": "Daily ETL: Lolalytics + Riot Data Dragon -> JSON files for the Counterpick CDN",
     "scripts": {
-        "update": "tsx src/etl.ts",
+        "etl": "tsx src/etl.ts",
         "self-check": "tsx src/self-check.ts public/data",
         "smoke-test": "tsx src/smoke-test.ts public/data",
         "test": "vitest run --exclude tests/golden.test.ts",

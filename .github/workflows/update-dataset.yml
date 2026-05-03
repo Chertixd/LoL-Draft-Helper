@@ -30,7 +30,7 @@ jobs:
 
             - name: Run ETL
               working-directory: supabase-dataset-updater
-              run: pnpm update
+              run: pnpm etl
               env:
                   CDN_BASE_URL: https://chertixd.github.io/lol-draft-helper-cdn/data
 
