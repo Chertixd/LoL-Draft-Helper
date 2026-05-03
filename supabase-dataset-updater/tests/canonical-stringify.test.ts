@@ -56,3 +56,29 @@ describe("canonicalStringify — sorting & nesting", () => {
             '[{"a":2,"b":1},{"c":4,"d":3}]'
         ));
 });
+
+describe("canonicalStringify — numeric edge cases", () => {
+    it("emits integer for whole-number float", () => {
+        // Python json.dumps(1.0) = "1.0"; JSON.stringify(1.0) = "1"
+        // safe-stable-stringify follows JS — value is just the number 1.
+        // Our row data only ever has integers (Math.round in lolalytics/index.ts),
+        // so we never hit float-1.0 in production. Document the known difference.
+        eq(canonicalStringify(1), "1");
+    });
+
+    it("preserves IEEE-754 float representation", () =>
+        // 0.1 + 0.2 produces the same float-bits in both Python and JS;
+        // so the canonical text is identical: "0.30000000000000004".
+        eq(canonicalStringify(0.1 + 0.2), "0.30000000000000004"));
+
+    it("handles negative zero as zero", () => eq(canonicalStringify(-0), "0"));
+
+    it("rejects NaN", () =>
+        expect(() => canonicalStringify(NaN)).toThrow(/not JSON-serializable/i));
+
+    it("rejects Infinity", () =>
+        expect(() => canonicalStringify(Infinity)).toThrow(/not JSON-serializable/i));
+
+    it("rejects -Infinity", () =>
+        expect(() => canonicalStringify(-Infinity)).toThrow(/not JSON-serializable/i));
+});
