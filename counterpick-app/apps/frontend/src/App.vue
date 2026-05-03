@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue';
+import { ref, onMounted, onBeforeUnmount, computed, watch } from 'vue';
 import { RouterView, RouterLink } from 'vue-router';
 import { checkBackendHealth, getLeagueClientStatus } from '@/api/backend';
 import { initBackendListeners } from '@/api/client';
@@ -55,6 +55,43 @@ function onLolConnected() {
  * or after a "Restart" click). Mirrors the post-mount probe but skips the
  * one-time setup so it's safe to call repeatedly.
  */
+// Auto-recovery: when state flips to 'disconnected', the Rust supervisor
+// has stopped supervising (loop breaks after the disconnect emit). The only
+// way back to 'running' is a manual Restart click OR a backend health probe
+// that succeeds. Poll every 3s while disconnected so a recovered sidecar
+// (e.g. Vite hot-reload respawn, transient try_wait false-positive) auto-
+// clears the banner without user action.
+let recoveryTimer: ReturnType<typeof setInterval> | null = null;
+
+function stopRecoveryPolling() {
+    if (recoveryTimer !== null) {
+        clearInterval(recoveryTimer);
+        recoveryTimer = null;
+    }
+}
+
+function startRecoveryPolling() {
+    if (recoveryTimer !== null) return;
+    recoveryTimer = setInterval(() => {
+        void recheckBackendStatus();
+    }, 3000);
+}
+
+watch(
+    () => appStatus.state,
+    (newState) => {
+        if (newState === 'disconnected') {
+            startRecoveryPolling();
+        } else {
+            stopRecoveryPolling();
+        }
+    }
+);
+
+onBeforeUnmount(() => {
+    stopRecoveryPolling();
+});
+
 async function recheckBackendStatus() {
     try {
         const response = await checkBackendHealth();
