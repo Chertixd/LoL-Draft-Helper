@@ -82,3 +82,39 @@ describe("canonicalStringify — numeric edge cases", () => {
     it("rejects -Infinity", () =>
         expect(() => canonicalStringify(-Infinity)).toThrow(/not JSON-serializable/i));
 });
+
+describe("canonicalStringify — unicode", () => {
+    it("emits multi-byte UTF-8 directly (no \\uXXXX escapes)", () => {
+        // Python's default json.dumps with ensure_ascii=False emits raw UTF-8;
+        // export_to_json.py does NOT pass ensure_ascii=False, but it does NOT
+        // pass ensure_ascii=True either. Default is True, meaning it WOULD
+        // escape. CRITICAL: confirm what export_to_json.py actually does.
+        //
+        // From export_to_json.py line 112-117 — no ensure_ascii kwarg, so
+        // the Python default (ensure_ascii=True) applies: non-ASCII becomes
+        // \uXXXX escapes. We must match that.
+        //
+        // safe-stable-stringify default uses JSON.stringify which does NOT
+        // escape non-ASCII characters. We need to post-process or override.
+        //
+        // Test the expectation: Python emits "\\u4e09" for "三", not "三".
+        eq(canonicalStringify({ name: "三" }), '{"name":"\\u4e09"}');
+    });
+
+    it("escapes emoji (multi-codepoint surrogate pairs)", () => {
+        // "😀" is U+1F600, surrogate pair "😀" in UTF-16.
+        // Python emits both halves as \uXXXX.
+        eq(canonicalStringify("😀"), '"\\ud83d\\ude00"');
+    });
+
+    it("preserves ASCII control characters as escaped", () => {
+        // \n is "\n" (escape sequence), tab is "\t", etc.
+        eq(canonicalStringify("\n\t"), '"\\n\\t"');
+    });
+
+    it("escapes embedded quotes", () =>
+        eq(canonicalStringify('a"b'), '"a\\"b"'));
+
+    it("escapes backslashes", () =>
+        eq(canonicalStringify("a\\b"), '"a\\\\b"'));
+});
