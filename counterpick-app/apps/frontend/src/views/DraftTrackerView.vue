@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, computed, watch } from 'vue';
+import { ref, onMounted, computed, watch } from 'vue';
 import { useChampionStore } from '@/stores/champion';
 import { useDraftStore } from '@/stores/draft';
 import { useSettingsStore } from '@/stores/settings';
@@ -83,9 +83,12 @@ onMounted(async () => {
     }
 });
 
-onUnmounted(() => {
-    draftStore.disconnectWebSocket();
-});
+// Note: websocket stays connected across route changes. The previous
+// disconnectWebSocket() on unmount caused the footer's League Client status
+// to flip to 'offline' whenever the user navigated to Champion Lookup
+// (websocket dropped → leagueClientStatus computed → 'offline'). The socket
+// is single-instance-guarded in draftStore.connectWebSocket so re-mounting
+// DraftTracker is a no-op when already connected.
 
 // --- METHODS ---
 function onRoleChange(role: Role) {
