@@ -38,6 +38,20 @@ jobs:
               working-directory: supabase-dataset-updater
               run: pnpm self-check
 
+            # Preserve auto-updater manifest. The release.yml workflow publishes
+            # latest.json to the CDN root (NOT under data/) for tauri-plugin-updater.
+            # Our publish below uses force_orphan: true which would wipe it.
+            # Fetch the live copy and stage it for re-publish so the daily cron
+            # never breaks the auto-updater.
+            - name: Preserve latest.json from CDN root
+              working-directory: supabase-dataset-updater
+              shell: bash
+              run: |
+                  curl -fsS https://chertixd.github.io/lol-draft-helper-cdn/latest.json \
+                      -o public/latest.json \
+                      && echo "[preserve] latest.json staged for re-publish" \
+                      || echo "[preserve] no latest.json on CDN yet (release pending) — skipping"
+
             - name: Publish to gh-pages branch
               uses: peaceiris/actions-gh-pages@v4
               with:
