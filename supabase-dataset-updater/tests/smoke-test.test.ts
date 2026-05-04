@@ -81,4 +81,29 @@ describe("verifyLiveCdn", () => {
             verifyLiveCdn(CDN, "/out", { retries: 2, sleepMs: 0 })
         ).rejects.toThrow(/404/);
     });
+
+    it("retries on stale-content 200 (edge cache lag) until match", async () => {
+        // Simulates the GitHub Pages edge-cache scenario: file IS published
+        // but the edge serves the OLD content for a few minutes after push.
+        const oldEnv = serializeEnvelope(
+            wrapWithEnvelope("champions", [{ key: "old" }], FROZEN)
+        );
+        const newEnv = serializeEnvelope(
+            wrapWithEnvelope("champions", [{ key: "new" }], FROZEN)
+        );
+        vol.fromJSON({
+            "/out/champions.json": Buffer.from(newEnv).toString("utf-8"),
+        });
+
+        fetchMock
+            .mockResolvedValueOnce(new Response(Buffer.from(oldEnv), { status: 200 }))
+            .mockResolvedValueOnce(new Response(Buffer.from(oldEnv), { status: 200 }))
+            .mockResolvedValueOnce(new Response(Buffer.from(newEnv), { status: 200 }));
+
+        await expect(
+            verifyLiveCdn(CDN, "/out", { retries: 3, sleepMs: 0 })
+        ).resolves.not.toThrow();
+
+        expect(fetchMock).toHaveBeenCalledTimes(3);
+    });
 });

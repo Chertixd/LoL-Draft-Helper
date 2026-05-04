@@ -2,14 +2,15 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 interface SmokeOptions {
-    retries: number; // additional attempts after the first; 3 is reasonable for prod
-    sleepMs: number; // delay between attempts; 30000 in prod
+    retries: number; // additional attempts after the first; 9 by default = up to 5 min
+    sleepMs: number; // delay between attempts; 30_000 in prod
 }
 
 /**
  * Verify each local .json file's __meta.sha256 matches what the live CDN
- * serves at the same filename. Retries on 404 to absorb GitHub Pages edge
- * propagation lag.
+ * serves at the same filename. Retries on 404 OR sha256-mismatch to absorb
+ * GitHub Pages edge propagation lag (Pages edge cache TTL can be several
+ * minutes — a 200 with stale content is just as transient as a 404).
  *
  * Safety Layer 3: this runs after peaceiris/actions-gh-pages succeeds. If
  * it throws, the workflow fails — but the CDN is already in a broken state
@@ -18,7 +19,7 @@ interface SmokeOptions {
 export async function verifyLiveCdn(
     cdnBaseUrl: string,
     localDir: string,
-    opts: SmokeOptions = { retries: 3, sleepMs: 30_000 }
+    opts: SmokeOptions = { retries: 9, sleepMs: 30_000 }
 ): Promise<void> {
     const files = readdirSync(localDir).filter((f) => f.endsWith(".json"));
     for (const filename of files) {
@@ -29,43 +30,60 @@ export async function verifyLiveCdn(
         }
 
         const url = `${cdnBaseUrl.replace(/\/$/, "")}/${filename}`;
-        const liveSha = await fetchWithRetries(url, opts);
-        if (liveSha !== localSha) {
-            throw new Error(
-                `smoke-test: sha256 mismatch in ${filename} (live=${liveSha}, local=${localSha})`
-            );
-        }
+        await fetchUntilMatchOrFail(url, localSha, opts);
     }
     console.log(
         `[smoke-test] verified ${files.length} files against ${cdnBaseUrl}`
     );
 }
 
-async function fetchWithRetries(
+/**
+ * Fetch the URL repeatedly until the response's __meta.sha256 matches the
+ * expected value. Retries on:
+ *  - 404 (edge cache propagation lag — file not visible yet)
+ *  - 200 with sha mismatch (edge cache serving stale content from before push)
+ *
+ * Hard-fails on:
+ *  - any other HTTP status (5xx, etc.)
+ *  - 200 but parse error or missing __meta
+ */
+async function fetchUntilMatchOrFail(
     url: string,
+    expectedSha: string,
     opts: SmokeOptions
-): Promise<string> {
+): Promise<void> {
     const totalAttempts = opts.retries + 1;
+    let lastReason = "no attempts made";
+
     for (let attempt = 1; attempt <= totalAttempts; attempt++) {
         const resp = await fetch(url);
-        if (resp.ok) {
-            const text = await resp.text();
-            const sha = JSON.parse(text).__meta?.sha256;
-            if (typeof sha !== "string") {
-                throw new Error(`smoke-test: live ${url} has no __meta.sha256`);
-            }
-            return sha;
-        }
-        if (resp.status !== 404) {
+
+        if (resp.status === 404) {
+            lastReason = "404 (edge cache propagation lag)";
+        } else if (!resp.ok) {
             throw new Error(
                 `smoke-test: unexpected status ${resp.status} fetching ${url}`
             );
+        } else {
+            const text = await resp.text();
+            const liveSha = JSON.parse(text).__meta?.sha256;
+            if (typeof liveSha !== "string") {
+                throw new Error(`smoke-test: live ${url} has no __meta.sha256`);
+            }
+            if (liveSha === expectedSha) {
+                return;
+            }
+            lastReason = `sha256 mismatch (expected=${expectedSha.slice(0, 8)}..., live=${liveSha.slice(0, 8)}...) — edge cache lag`;
         }
+
         if (attempt < totalAttempts) {
             await new Promise((r) => setTimeout(r, opts.sleepMs));
         }
     }
-    throw new Error(`smoke-test: 404 after ${totalAttempts} attempts: ${url}`);
+
+    throw new Error(
+        `smoke-test: ${lastReason} after ${totalAttempts} attempts: ${url}`
+    );
 }
 
 // CLI entry point: `tsx src/smoke-test.ts public/data`
